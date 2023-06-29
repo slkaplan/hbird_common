@@ -1,0 +1,14 @@
+# define the goal (Action request). 
+# This is defined as a "path", array of Waypoints
+Waypoint[]  path    
+---
+
+# define the result that will be published after the action execution ends. 
+# This is defined as a "String" as either 'done' or 'failed'
+string  status
+---
+
+# define a feedback message that will be published during action execution. 
+# This is defined as "State" and agent_id
+State   state
+string  agent_id
