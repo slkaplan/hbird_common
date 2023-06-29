@@ -218,12 +218,14 @@ class AgentControlNode(Node):
         ros_state.position.z = state_py.z_pos
         ros_state.orientation.z = state_py.psi
 
+
     def convert_from_ros_state(self, ros_state):
         state = StatePy()
         state.x_pos = ros_state.position.x
         state.y_pos = ros_state.position.y
         state.z_pos = ros_state.position.z
         state.psi = ros_state.orientation.z
+
 
     def task_complete(self):
         return False
