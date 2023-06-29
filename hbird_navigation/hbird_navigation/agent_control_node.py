@@ -5,15 +5,11 @@ from rclpy.executors import MultiThreadedExecutor
 
 import time
 
-from my_robot_interfaces.action import AgentTask
-from my_robot_interfaces.msg import Waypoint, State
+from hbird_interfaces.action import AgentTask
+from hbird_interfaces.msg import Waypoint, State
 from sensor_msgs.msg import LaserScan, Image
 from geometry_msgs.msg import Twist
 from .scripts.utils import State as StatePy
-
-ActionType = None
-MessageType = None
-StateMessType = None
 
 
 #TODO:
@@ -28,11 +24,12 @@ StateMessType = None
 
 
 
-
 class AgentControlNode(Node):
 
     def __init__(self):
         super().__init__('agent_control_node')
+
+        self.get_logger().info('Starting up the Agent Control Node...')
         
         # subscribers:
         self._laser_scan_subscriber = self.create_subscription(LaserScan, '/laser_scan',
@@ -56,7 +53,9 @@ class AgentControlNode(Node):
 
 
         # action server:
-        self._agent_id = self.get_parameter('agent_id').get_parameter_value().string_value
+        # TODO: Add the parameter getter and the parameter declaration
+        # self._agent_id = self.get_parameter('agent_id').get_parameter_value().string_value
+        self._agent_id = 'HB1'
         self._action_server = ActionServer(self, 
                                            AgentTask, 
                                            self._agent_id+"_action", 
@@ -72,6 +71,8 @@ class AgentControlNode(Node):
         self._last_rear_camera_image = None
 
         self._cycle_duration = 0.1
+
+        self.get_logger().info('Waiting for a task from Ground Control...')
 
 
     def laser_scan_callback(self, scan_msg):
@@ -92,14 +93,13 @@ class AgentControlNode(Node):
     
     def action_execution_callback(self, task_handle):
         """Execute a goal."""
-        self.get_logger().info('Executing task...')
+        self.get_logger().info('Task received! Executing task...')
         
         # update task handle
         self._task_handle = task_handle
 
         # create a feedback message instance
         feedback_msg = AgentTask.Feedback()
-        feedback_msg.state = self._state
 
         # execute the action
         while not self.task_complete():
@@ -125,6 +125,8 @@ class AgentControlNode(Node):
             self._cmd_vel_publisher.publish(cmd_vel)
 
             # publish the feedback (state of the agent)
+            feedback_msg.state = self._state
+            feedback_msg.agent_id = self._agent_id
             task_handle.publish_feedback(feedback_msg)
 
             # set a cycle time
@@ -143,21 +145,26 @@ class AgentControlNode(Node):
 
     
     def compute_control_cmds(self):
+
+        final_cmd_vel = Twist()
+        final_cmd_vel.linear.x = 0.1
+        final_cmd_vel.angular.z = 0.1
+
         # path following:
-        nxt_waypoint_id = self.find_next_waypoint(curr_waypoint_id)
-        path_follow_vel_cmd = self.follow_path(nxt_waypoint_id,)
+        # nxt_waypoint_id = self.find_next_waypoint(curr_waypoint_id)
+        # path_follow_vel_cmd = self.follow_path(nxt_waypoint_id,)
 
-        # obstacle avoidance:
-        obst_avoid_vel_cmd = self.avoid_obstacle()
+        # # obstacle avoidance:
+        # obst_avoid_vel_cmd = self.avoid_obstacle()
 
-        # bin alignment:
-        bin_pose = self.localize_bin()
-        bin_align_vel_cmd = self.align_to_bin(bin_pose)
+        # # bin alignment:
+        # bin_pose = self.localize_bin()
+        # bin_align_vel_cmd = self.align_to_bin(bin_pose)
 
-        # arbiter:
-        final_cmd_vel = self.blend_commands(path_follow_vel_cmd, 
-                                            obst_avoid_vel_cmd,
-                                            bin_align_vel_cmd)
+        # # arbiter:
+        # final_cmd_vel = self.blend_commands(path_follow_vel_cmd, 
+        #                                     obst_avoid_vel_cmd,
+        #                                     bin_align_vel_cmd)
 
         return final_cmd_vel
 
@@ -218,7 +225,9 @@ class AgentControlNode(Node):
         state.z_pos = ros_state.position.z
         state.psi = ros_state.orientation.z
 
-
+    def task_complete(self):
+        return False
+    
 
 def main(args=None):
     rclpy.init(args=args)

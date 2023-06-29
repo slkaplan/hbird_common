@@ -18,6 +18,7 @@ find_package(std_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/State.msg"
   "msg/Waypoint.msg"
+  "msg/Path.msg"
   "action/AgentTask.action"
   DEPENDENCIES geometry_msgs std_msgs # Add packages that above messages depend on
   

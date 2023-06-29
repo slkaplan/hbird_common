@@ -3,13 +3,14 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 import time
 import yaml
+import pathlib
 
-from my_robot_interfaces.action import AgentTask
-from my_robot_interfaces.msg import Waypoint
+from hbird_interfaces.action import AgentTask
+from hbird_interfaces.msg import Waypoint, Path
 
 from .scripts.Quadrotor import Quadrotor
 from .scripts.utils import Task, Position, State, define_env
-from .scripts.utils import Waypoint as WaypointPy
+from .scripts.utils import WaypointPy as WaypointPy
 
 
 #TODO:
@@ -29,12 +30,12 @@ from .scripts.utils import Waypoint as WaypointPy
 class GroundControlNode(Node):
     
     def __init__(self, config):
-        # Initializes "countdown_client" node
         super().__init__("ground_control_node")
 
-        self._mode = config['use_hardware']
+        self.get_logger().info('Starting up the Ground Control Node...\n')
+
+        self._mode = config['mode']
         self._agent_init = config['agent_init']
-        self._colors = config['agent_colors']
         self._time_delta = config['time_delta']
         self._env_simplified = config['map'].copy()
         self._env = define_env(config['map'])
@@ -42,11 +43,11 @@ class GroundControlNode(Node):
 
         # initialize variables
         self._agent_list = dict()
-        self._task_list = None
+        self._task_list = dict()
         self._task_assignment = dict()
         self._agent_paths = dict()
-        self._available_agents = list(self._agent_list.keys()) #TODO: Set after init_agent_list
-        self._task_queue = list(self._task_list.keys())
+        # self._available_agents = list(self._agent_list.keys()) #TODO: Set after init_agent_list
+        # self._task_queue = list(self._task_list.keys())
         self._completed_tasks = dict()
         self._agents_active = False
 
@@ -97,8 +98,8 @@ class GroundControlNode(Node):
             self._agent_list[agent._id] = agent
 
         
-        print(f'Mode [{self._mode}] | Agent {agent._id}: \
-              {self._agent_list[agent._id].get_pos().x, self._agent_list[agent._id].get_pos().y} ')
+            print(f'Agent {agent._id} | Mode [{self._mode}] | Position  \
+                  {self._agent_list[agent._id].get_pos().x, self._agent_list[agent._id].get_pos().y} ')
         print('----------------------------------')
 
     
@@ -147,14 +148,34 @@ class GroundControlNode(Node):
 
         # each path should be a list of WaypointPy instances
 
-        self._agent_paths = None
+        self.get_logger().info('Generating agent paths...')
+
+        # create fake paths
+        paths = []
+        paths.append([WaypointPy(id='pick', x=1.67, y=0.45),
+                      WaypointPy(id=' ', x=1.67, y=1.67),
+                      WaypointPy(id='drop', x=1.67, y=2.28)])
+        paths.append([WaypointPy(id='pick', x=3.81, y=0.45),
+                      WaypointPy(id=' ', x=3.81, y=1.67),
+                      WaypointPy(id='drop', x=3.81, y=2.28)])
+
+        # add fake paths to agents
+        for i, agent in enumerate(self._agent_list.values()):
+            agent.set_path(paths[i])
+
+
+        self.get_logger().info('Agent path generation is complete!!')
 
     
     def send_paths(self):
 
         for agent in self._agent_list.values():
+
+            # % PRINT DEBUG
+            self.get_logger().info('Task for Agent [{0}] is trying to send...'.format(agent._id))
+
             task_msg = AgentTask.Goal()     # create an instance AgentTask action
-            task_msg.path = self.convert_to_ros_path(agent.path)    # convert from list to ROS message type (Waypoint)
+            task_msg.path = self.convert_to_ros_path(agent.get_path())    # convert from list to ROS message type (Waypoint)
             
             ac = self._action_clients[agent._id]
             ac.wait_for_server() # Waits for server to be available, then sends goal/paths
@@ -165,7 +186,7 @@ class GroundControlNode(Node):
             future_handle.add_done_callback(self.goal_response_callback)
 
             # % PRINT DEBUG
-            self.get_logger().info('Task for Agent [{0}] is sent'.format(agent._id))
+            self.get_logger().info('Task for Agent [{0}] is sent'.format(agent._id)) #TODO: Create a getter for ID
 
 
     def feedback_callback(self, feedback_msg):
@@ -177,7 +198,7 @@ class GroundControlNode(Node):
         self._agent_list[agent_id].update_state(agent_state)
 
         # % PRINT DEBUG
-        self.get_logger().info('Agent [{0}] | Updating state [x: {}, y: {}, z: {}]'.format(agent_id,
+        self.get_logger().info('Agent [{}] | Updating state [x: {}, y: {}, z: {}]'.format(agent_id,
                                                                                            agent_state.x_pos,
                                                                                            agent_state.y_pos,
                                                                                            agent_state.z_pos))
@@ -210,7 +231,8 @@ class GroundControlNode(Node):
 
 
     def convert_to_ros_path(self, path):
-        ros_path = []
+
+        ros_path = Path()
 
         for path_wp in path:
             ros_wp = Waypoint()
@@ -220,7 +242,9 @@ class GroundControlNode(Node):
             ros_wp.id = path_wp.id
             ros_wp.heading = path_wp.heading
             
-            ros_path.append(ros_wp)
+            ros_path.data.append(ros_wp)
+
+        return ros_path
 
 
     def convert_from_ros_state(self, ros_state):
@@ -230,13 +254,16 @@ class GroundControlNode(Node):
         state.z_pos = ros_state.position.z
         state.psi = ros_state.orientation.z
 
+        return state
+
 
 def main(args=None):
     rclpy.init(args=args)
 
     # load configuration file from YAML file
-    config_file = './config/scenario_1.yaml'
-    with open(config_file, 'r') as file:
+    config_path = str(pathlib.Path().parent.resolve())+"/src/hbird_software_system/hbird_navigation/hbird_navigation/config/"
+    config_file = 'scenario_1.yaml'
+    with open(config_path+config_file, 'r') as file:
         config = yaml.load(file, Loader=yaml.FullLoader)
 
     gcs = GroundControlNode(config)

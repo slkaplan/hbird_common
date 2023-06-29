@@ -67,7 +67,7 @@ class VelCommand:
 
 
 @dataclass
-class Waypoint:
+class WaypointPy:
     """This dataclass represents a waypoint including position, id and heading """
     id:         str
     x:          float = 0.0
@@ -125,6 +125,7 @@ class Task:
     drop_id:   str
     id:        str
     priority:  int
+    time_input: int
 
 
 

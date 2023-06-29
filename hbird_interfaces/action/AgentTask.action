@@ -1,6 +1,7 @@
 # define the goal (Action request). 
 # This is defined as a "path", array of Waypoints
-Waypoint[]  path    
+# Waypoint[]  path    
+Path    path
 ---
 
 # define the result that will be published after the action execution ends. 

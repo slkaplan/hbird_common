@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 
-from my_robot_interfaces.msg import Waypoint, State
+from hbird_interfaces.msg import Waypoint, State
 from geometry_msgs.msg import Twist
 
 from .scripts.utils import State as StatePy
@@ -13,6 +13,8 @@ class CrazyflieVizNode(Node):
     def __init__(self):
         super().__init__('crazyflie_viz_node')
         
+        self.get_logger().info('Starting up the Crazyflie Visualization Node...')
+
         # subscribers:
         self._control_subscriber = self.create_subscription(Twist, '/cmd_vel',
 				            self.control_callback, 10)
@@ -24,11 +26,12 @@ class CrazyflieVizNode(Node):
 
         # timer:
         self._publish_rate = 0.5  # cycle/sec
-        self._publish_timer = self.create_timer(self._publish_rate, self.timer_callback)
+        self._publish_timer = self.create_timer(self._publish_rate, self.publish_timer_callback)
 
         # attributes:
         self._state = State()
         # self._status = ...
+        self._time_delta = 0.1 #TODO: This should be set from the 
 
 
     def control_callback(self, cmd_msg):
@@ -49,11 +52,11 @@ class CrazyflieVizNode(Node):
         pass
 
 
-    def timer_callback(self, ):
+    def publish_timer_callback(self, ):
 		# regulates publishing of agent state and status
 		
 		# arrange agent state message
-        state_msg = Twist()
+        state_msg = State()
         state_msg = self._state
         # ...
         self._state_publisher.publish(state_msg)

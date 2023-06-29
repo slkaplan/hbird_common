@@ -21,6 +21,7 @@ class Quadrotor():
                  axes=None, color=None, 
                  id=None, uri=None,
                  take_off_height=0.5,
+                 mode=None,
                  hardware_flag=False, dt=None):
         self._id = id
         self._ax = axes 
@@ -54,6 +55,7 @@ class Quadrotor():
 
         # crazyflie hardware setup
         self._hardware_flag = hardware_flag
+        self.mode = mode
         self._is_flowdeck_attached = False
         self._deck_attached_event = Event()
 
@@ -194,8 +196,17 @@ class Quadrotor():
         return Position(x=self._state.x_pos, y=self._state.y_pos, z=self._state.z_pos)
 
 
+    def get_path(self):
+        return self._path
+
+
+    def set_path(self, path):
+        self._path = path
+
+
     def get_attitude(self):
         return
+
 
     def take_off(self):
         if self._hardware_flag:
@@ -229,6 +240,12 @@ class Quadrotor():
         self._y_track.append(self._state.y_pos)
         self._z_track.append(self._state.z_pos)
 
+    
+    def update_state(self, state):
+        self._state = state
+
+        self.update_state_trace()
+        
 
     def reset_estimator(self):
         cf = self.scf.cf
