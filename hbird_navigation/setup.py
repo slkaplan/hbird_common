@@ -13,7 +13,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        (os.path.join('share', package_name), glob('launch/*.launch.py'))
+        (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*launch.[pxy][yma]*')))
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,11 +24,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'agent_control = hbird_navigation.agent_control_node:main',
-            'crazyflie_viz = hbird_navigation.crazyflie_viz_node:main',
-            'crazyflie_sim = hbird_navigation.crazyflie_sim_node:main',
-            'crazyflie_hdw = hbird_navigation.crazyflie_hdw_node:main',
-            'ground_control = hbird_navigation.ground_control_node:main'
+            'agent_control_node = hbird_navigation.agent_control_node:main'
         ],
     },
 )

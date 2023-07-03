@@ -2,11 +2,12 @@ import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionServer
 from rclpy.executors import MultiThreadedExecutor
+from rcl_interfaces.msg import ParameterDescriptor
 
 import time
 
-from hbird_interfaces.action import AgentTask
-from hbird_interfaces.msg import Waypoint, State
+from hbird_msgs.action import AgentTask
+from hbird_msgs.msg import Waypoint, State
 from sensor_msgs.msg import LaserScan, Image
 from geometry_msgs.msg import Twist
 from .scripts.utils import State as StatePy
@@ -31,34 +32,43 @@ class AgentControlNode(Node):
 
         self.get_logger().info('Starting up the Agent Control Node...')
         
+        # TODO: Add the parameter getter and the parameter declaration
+        param_descriptor = ParameterDescriptor(description='Defines agent ID.')
+        self.declare_parameter('agent_id', 'HB0', param_descriptor)
+        self._agent_id = self.get_parameter('agent_id')._value
+
+        # topics:
+        scan_topic = '/'+self._agent_id+'/laser_scan'
+        front_camera_topic = '/'+self._agent_id+'/front_camera/color/image_raw'
+        rear_camera_topic = '/'+self._agent_id+'/rear_camera/color/image_raw'
+        agent_state_topic = '/'+self._agent_id+'/agent_state'
+        cmd_vel_topic = '/'+self._agent_id+'/cmd_vel'
+
         # subscribers:
-        self._laser_scan_subscriber = self.create_subscription(LaserScan, '/laser_scan',
+        self._laser_scan_subscriber = self.create_subscription(LaserScan, scan_topic,
 				            self.laser_scan_callback, 10)
-        self._front_camera_subscriber = self.create_subscription(Image, '/front_camera/color/image_raw',
+        self._front_camera_subscriber = self.create_subscription(Image, front_camera_topic,
 				            self.front_camera_callback, 10)
-        self._rear_camera_subscriber = self.create_subscription(Image, '/rear_camera/color/image_raw',
+        self._rear_camera_subscriber = self.create_subscription(Image, rear_camera_topic,
 				            self.rear_camera_callback, 10)
-        self._state_subscriber = self.create_subscription(State, '/agent_state',
+        self._state_subscriber = self.create_subscription(State, agent_state_topic,
 				            self.state_update_callback, 10)
         # self._status_subscriber = self.create_subscription(MessageType, '/agent_state',
 		# 		            self.state_update_callback, 10)
 
 
         # publishers:
-        self._cmd_vel_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+        self._cmd_vel_publisher = self.create_publisher(Twist, cmd_vel_topic, 10)
 
         # timer:
         self._publish_rate = 0.5  # cycle/sec
         self._publish_timer = self.create_timer(self._publish_rate, self.control_cycle)
 
 
-        # action server:
-        # TODO: Add the parameter getter and the parameter declaration
-        # self._agent_id = self.get_parameter('agent_id').get_parameter_value().string_value
-        self._agent_id = 'HB1'
+        # action server:       
         self._action_server = ActionServer(self, 
                                            AgentTask, 
-                                           self._agent_id+"_action", 
+                                           "task_action", 
                                            self.action_execution_callback)
 
 
