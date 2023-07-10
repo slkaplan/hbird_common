@@ -82,6 +82,11 @@ class AgentControlNode(Node):
 
         self._cycle_duration = 0.1
 
+        # represents the state as in a finite state diagram/flowchart
+        self.stage = 0 # 0 is before takeoff and after landing, drone is not actively completing a task
+        self.cancelled = False
+        self.curr_waypoint_id = "0"
+
         self.get_logger().info('Waiting for a task from Ground Control...')
 
 
@@ -105,11 +110,17 @@ class AgentControlNode(Node):
         """Execute a goal."""
         self.get_logger().info('Task received! Executing task...')
         
+        
         # update task handle
         self._task_handle = task_handle
 
         # create a feedback message instance
         feedback_msg = AgentTask.Feedback()
+
+        # initiate take off and update stage
+        self.stage = 1
+        self.take_off()
+        stall_threshold = 120  # 2 minutes
 
         # execute the action
         while not self.task_complete():
@@ -124,24 +135,133 @@ class AgentControlNode(Node):
 
                 return AgentTask.Result()
             
-            # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            # perform the task...
 
-            cmd_vel = self.compute_control_cmds()
+            match self.stage:
+                case 1:
+                    self.takeoff()
+                    self.stage = 2
+                case 2:
+                    while self.stage == 2:
+                         # get next waypoint
+                         nxt_waypoint_id = self.find_next_waypoint(self.curr_waypoint_id)
+                         # start timer to track how long agent has been traveling to next waypoint
+                         t1 = time.time()
+                         # set state to traveling between waypoints
+                         in_btwn_waypoints = True
+                         while in_btwn_waypoints:
 
-            # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                            # check the task has not been cancelled
+                            if self.task_cancelled(task_handle):
+                                return AgentTask.Result()
+                            
+                            # proceed if it has not
 
-            # publish control command
-            self._cmd_vel_publisher.publish(cmd_vel)
+                            cmd_vel = self.compute_control_cmds("path following")
+                            
+                            # send velocity commands to Crazyflie to move drone
+                            self.move(self, cmd_vel, task_handle, feedback_msg)
 
-            # publish the feedback (state of the agent)
-            feedback_msg.state = self._state
-            feedback_msg.agent_id = self._agent_id
-            task_handle.publish_feedback(feedback_msg)
+                            # check whether drone is within range of new way point
+                            if self.reached_waypoint(nxt_waypoint_id):
+                                # update current waypoint
+                                self.curr_waypoint_id = nxt_waypoint_id
+                                # if "pick"
+                                #   self.stage = 3
+                                #   in_btwn_waypoints = False
 
-            # set a cycle time
+                                # else if "drop"
+                                #   self.stage = 4
+                                #   in_btwn_waypoints = False
+
+                                # else if "end"
+                                #   self.stage = 5
+                                #   in_btwn_waypoints = False
+
+                                # else:
+                                #   in_btwn_waypoints = False
+                            else:
+                                # if traveling between waypoints is taking too long, consider the task cancelled or get a new path
+                                t2 = time.time()
+                                elapsed = t2 - t1
+                                if elapsed > stall_threshold:
+                                    self.cancelled = True
+                                    self.stage = 6
+                                    in_btwn_waypoints = False
+                case 3:
+                    bin_aligned = False
+                    parcel_picked = False
+                    while self.stage == 3:
+                        if bin_aligned:
+                            # call function to pick parcel and set parcel_picked to True
+
+                            # check that parcel has been successfully picked up (this check 
+                            # could be in drop function tho eliminating need for parcel_picked variable 
+                            # and directly updating the stage after picking the parcel)
+                            if parcel_picked:  
+                                # prepare to continue path following
+                                self.stage = 2
+                                break
+                        else:
+                        
+                            cmd_vel = self.compute_control_cmds("picking up")
+                            
+                            # send velocity commands to Crazyflie to move drone until aligned with bin
+                            self.move(self, cmd_vel, task_handle, feedback_msg)
+                            
+                            # call function to check when drone is aligned to bin and set bin_aligned to True
+
+                            # NOTE: compute_control_cmds should maybe be called in a loop inside of a new function
+                            # that only exits when the drone is sufficiently aligned to the pick up bin rather 
+                            # than checking for alignment after every motor command
+
+                        
+                case 4:
+                    parcel_dropped = False
+                    drop_aligned = False
+                    while self.stage == 4:
+                        if drop_aligned:
+                            # call function to drop parcel and set parcel_dropped to True
+
+                            # check that parcel has been successfully dropped down (this check 
+                            # could be in drop function tho eliminating need for parcel_dropped variable 
+                            # and directly updating the stage after dropping the parcel)
+                            if parcel_dropped:  
+                                # prepare to continue path following
+                                self.stage = 2
+                                break
+                        else:
+                        
+                            cmd_vel = self.compute_control_cmds("dropping off")
+                            
+                            # send velocity commands to Crazyflie to move drone until aligned with bin
+                            self.move(self, cmd_vel, task_handle, feedback_msg)
+                            
+                            # call function to know when drone is aligned to drop_off bin and set drop_aligned to True
+
+                            # NOTE: compute_control_cmds should maybe be called in a loop inside of a new function
+                            # that only exits when the drone is sufficiently aligned to the drop off bin rather 
+                            # than checking for alignment after every motor command
+                case 5:
+                    self.land()
+                    self.task_complete = True
+                    # status = success
+                    if self.cancelled:
+                        status = fail
+                        self.get_logger().info("Failed to complete task.")
+                    
+                    self.get_logger().info("Task completed successfully.")
+                    self.stage = 0
+                case 6:
+                    # recalculate path with no pick or drop waypoints
+                    self.stage = 2
+                case _:
+                    # default case
+                    return
+
+            # set a cycle time/ mayb not need anymore
             time.sleep(self._cycle_duration)
 
+        
         # indicate that the action has succeeded
         task_handle.succeed()
 
@@ -154,34 +274,60 @@ class AgentControlNode(Node):
         return result
 
     
-    def compute_control_cmds(self):
+    def compute_control_cmds(self, mode):
 
         final_cmd_vel = Twist()
         final_cmd_vel.linear.x = 0.1
-        final_cmd_vel.angular.z = 0.1
+        final_cmd_vel.angular.z = 0.1 
 
-        # path following:
-        # nxt_waypoint_id = self.find_next_waypoint(curr_waypoint_id)
-        # path_follow_vel_cmd = self.follow_path(nxt_waypoint_id,)
+        match mode:
+            case "path following":
+                # get path following velocity
+                path_follow_vel_cmd = self.follow_path(nxt_waypoint_id)
 
-        # # obstacle avoidance:
-        # obst_avoid_vel_cmd = self.avoid_obstacle()
+                # get obstacle avoidance velocity
+                obst_avoid_vel_cmd = self.avoid_obstacle()
 
-        # # bin alignment:
-        # bin_pose = self.localize_bin()
-        # bin_align_vel_cmd = self.align_to_bin(bin_pose)
+                bin_align_vel_cmd = None
+                drop_align_vel_cmd = None
+            case "picking up":
+                # get obstacle avoidance velocity
+                obst_avoid_vel_cmd = self.avoid_obstacle()
 
-        # # arbiter:
-        # final_cmd_vel = self.blend_commands(path_follow_vel_cmd, 
-        #                                     obst_avoid_vel_cmd,
-        #                                     bin_align_vel_cmd)
+                # get bin alignment velocity
+                bin_pose = self.localize_bin()
+                bin_align_vel_cmd = self.align_to_bin(bin_pose)
 
+                path_follow_vel_cmd = None
+                drop_align_vel_cmd = None
+            case "dropping off":
+                # get obstacle avoidance velocity
+                obst_avoid_vel_cmd = self.avoid_obstacle()
+
+                # get dropoff alignment velocity
+                drop_pose = self.localize_drop()
+                drop_align_vel_cmd = self.align_to_drop_off(drop_pose)
+
+                path_follow_vel_cmd = None
+                bin_align_vel_cmd = None
+            case _:
+                self.get_logger().info("unknown arbiter mode")
+
+        # arbiter:
+        final_cmd_vel = self.blend_commands(path_follow_vel_cmd, 
+                                            obst_avoid_vel_cmd,
+                                            bin_align_vel_cmd,
+                                            drop_align_vel_cmd)
+
+        
         return final_cmd_vel
 
 
+    
     def find_next_waypoint(self, current_waypoint_id):
         nxt_waypoint_id = None
-        # ....
+
+        # calculate next waypoint
         return nxt_waypoint_id
     
 
@@ -196,11 +342,31 @@ class AgentControlNode(Node):
         # ....
         return obs_avoid_cmd
     
+    def move(self, cmd_vel, task_handle, feedback_msg):
+        # publish control command
+        self._cmd_vel_publisher.publish(cmd_vel)
 
+        # publish the feedback (state of the agent)
+        feedback_msg.state = self._state
+        feedback_msg.agent_id = self._agent_id
+        task_handle.publish_feedback(feedback_msg)
+
+    def reached_waypoint(self, nxt_waypoint_id):
+        # code to check whether we have reached the next waypoint
+        # get current location
+        # comp current location to waypoint location
+        # if close, return True, else return False
+        return False
+    
     def localize_bin(self):
         bin_pose = None
         # ....
         return bin_pose
+    
+    def localize_drop(self):
+        drop_pose = None
+        # ....
+        return drop_pose
     
 
     def align_to_bin(self, bin_pose):
@@ -208,6 +374,11 @@ class AgentControlNode(Node):
         # ....
         return bin_align_cmd
     
+    def align_to_drop_off(self, bin_pose):
+        drop_align_cmd = None
+        # ....
+        return drop_align_cmd
+
 
     def blend_commands(self, path_follow_cmd, 
                        obs_avoid_cmd,
@@ -239,6 +410,31 @@ class AgentControlNode(Node):
 
     def task_complete(self):
         return False
+    
+    def task_cancelled(self, task_handle):
+        # check if ground control has cancelled this task
+        if task_handle.is_cancel_requested:
+            task_handle.canceled()
+            self.get_logger().info('Task canceled')
+
+        self.cancelled = True
+    
+    def take_off(self):
+        self.get_logger().info('Taking Off...')
+        #crazyflie method to initiate takeoff
+        # update stage to start path following
+
+    def land(self):
+        self.get_logger().info('Landing...')
+        # crazyflie method to initiate landing
+
+
+    def check_bin_alignment(self):
+        well_aligned = false
+        #using camera and infrared, determine if agent is well_aligned and ready to grab parcel
+
+        
+
     
 
 def main(args=None):
