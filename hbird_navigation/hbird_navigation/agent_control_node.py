@@ -85,7 +85,8 @@ class AgentControlNode(Node):
         # represents the state as in a finite state diagram/flowchart
         self.stage = 0 # 0 is before takeoff and after landing, drone is not actively completing a task
         self.cancelled = False
-        self.curr_waypoint_id = "0"
+        self.curr_waypoint_id = "A1"
+        self.task_complete
 
         self.get_logger().info('Waiting for a task from Ground Control...')
 
@@ -119,11 +120,10 @@ class AgentControlNode(Node):
 
         # initiate take off and update stage
         self.stage = 1
-        self.take_off()
         stall_threshold = 120  # 2 minutes
 
         # execute the action
-        while not self.task_complete():
+        while not self.task_complete:
 
             # check if ground control has cancelled this task
             if task_handle.is_cancel_requested:
@@ -132,6 +132,7 @@ class AgentControlNode(Node):
                 # it seems to me that the GCS has to give a path back to base with the cancel order
 
                 # perform a return to home location maneuver??
+                # get a new path 
 
                 return AgentTask.Result()
             
@@ -144,10 +145,13 @@ class AgentControlNode(Node):
                     while self.stage == 2:
                          # get next waypoint
                          nxt_waypoint_id = self.find_next_waypoint(self.curr_waypoint_id)
+
                          # start timer to track how long agent has been traveling to next waypoint
                          t1 = time.time()
+
                          # set state to traveling between waypoints
                          in_btwn_waypoints = True
+                         
                          while in_btwn_waypoints:
 
                             # check the task has not been cancelled
@@ -230,7 +234,6 @@ class AgentControlNode(Node):
                                 self.stage = 2
                                 break
                         else:
-                        
                             cmd_vel = self.compute_control_cmds("dropping off")
                             
                             # send velocity commands to Crazyflie to move drone until aligned with bin
@@ -246,7 +249,7 @@ class AgentControlNode(Node):
                     self.task_complete = True
                     # status = success
                     if self.cancelled:
-                        status = fail
+                        # status = fail
                         self.get_logger().info("Failed to complete task.")
                     
                     self.get_logger().info("Task completed successfully.")
@@ -345,6 +348,8 @@ class AgentControlNode(Node):
     def move(self, cmd_vel, task_handle, feedback_msg):
         # publish control command
         self._cmd_vel_publisher.publish(cmd_vel)
+
+        # update the state
 
         # publish the feedback (state of the agent)
         feedback_msg.state = self._state
