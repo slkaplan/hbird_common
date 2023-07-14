@@ -5,6 +5,8 @@ from rclpy.executors import MultiThreadedExecutor
 from rcl_interfaces.msg import ParameterDescriptor
 
 import time
+import math
+from scipy.stats import truncnorm
 
 from hbird_msgs.action import AgentTask
 from hbird_msgs.msg import Waypoint, State
@@ -252,7 +254,7 @@ class AgentControlNode(Node):
                     self.get_logger().info("Task completed successfully.")
                     self.stage = 0
                 case 6:
-                    # recalculate path with no pick or drop waypoints
+                    # recalculate path wiArducam 1080P Day & Night Vision USB Camera for Computerth no pick or drop waypoints
                     self.stage = 2
                 case _:
                     # default case
@@ -326,21 +328,43 @@ class AgentControlNode(Node):
     
     def find_next_waypoint(self, current_waypoint_id):
         nxt_waypoint_id = None
-
+        
         # calculate next waypoint
         return nxt_waypoint_id
     
 
     def follow_path(self, nxt_waypoint_id):
-        path_follow_cmd = None
-        # ...
-        return path_follow_cmd
+        path_follow_brainwave = [0] * 36 
+        drone_angle = 90 # headed 90 degrees relative to the map 
+        nxt_waypt = [2.3, 4.5, 6]
+        current_waypt = [2.3, 3, 6]
+        # relative next waypoint ID  = next waypoint relative to the current waypoint 
+        relative_waypoint_coordinate = (nxt_waypt[0] - current_waypt[0], nxt_waypt[1] - current_waypt[1]) 
+        # convert to angle (relative next waypoint id)
+        heading_angle = self.convert_to_angle(relative_waypoint_coordinate)
+        # angle of heading minus the current heading of the drone 
+        direction = (drone_angle - heading_angle) + 180
+        place = direction/10
+        path_follow_brainwave[place] = 9 
+        path_follow_brainwave[place-1] = 3
+        path_follow_brainwave[place+1] = 3 
+        return path_follow_brainwave
     
-
     def avoid_obstacle(self):
         obs_avoid_cmd = None
-        # ....
+        # if there is an obstacle at the direnction in which we are heading within the range of the drone 
+        # adjust the velocity commands so that we can avoid the obstacle 
         return obs_avoid_cmd
+    
+    def convert_to_angle(x, y):
+        # converts x andpyhton command window y coordinate into angle
+        angle = math.degrees(math.atan2(y, x))
+        return angle
+        
+    def normal_distribution(mean=0, sd=1, low=0, upp=10): 
+        #generates 36 values 
+        return truncnorm(
+            (low - mean) / sd, (upp - mean) / sd, loc=mean, scale=sd)
     
     def move(self, cmd_vel, task_handle, feedback_msg):
         # publish control command
@@ -380,11 +404,17 @@ class AgentControlNode(Node):
         return drop_align_cmd
 
 
-    def blend_commands(self, path_follow_cmd, 
+    def blend_commands(self, path_follow_brainwave, 
                        obs_avoid_cmd,
                        bin_align_cmd):
-        final_cmd = None
-        # ....
+        heading_index = max(path_follow_brainwave)
+        heading_angle = ((path_follow_brainwave.index(heading_index))*10)-180
+        velocity = 1
+        final_cmd = Twist()
+        final_cmd.linear.x = math.cos(heading_angle) * velocity
+        final_cmd.linear.y = math.sin(heading_angle) * velocity
+        final_cmd.angular.z = 0
+        #final_cmd = None 
         return final_cmd
     
 
@@ -456,3 +486,4 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
