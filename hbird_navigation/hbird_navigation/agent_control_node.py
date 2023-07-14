@@ -6,7 +6,8 @@ from rcl_interfaces.msg import ParameterDescriptor
 
 import time
 import math
-from scipy.stats import truncnorm
+import numpy as np 
+from scipy.stats import norm
 
 from hbird_msgs.action import AgentTask
 from hbird_msgs.msg import Waypoint, State
@@ -332,39 +333,55 @@ class AgentControlNode(Node):
         # calculate next waypoint
         return nxt_waypoint_id
     
-
-    def follow_path(self, nxt_waypoint_id):
-        path_follow_brainwave = [0] * 36 
-        drone_angle = 90 # headed 90 degrees relative to the map 
+    # TODO figure out how to convert waypoint ID to coordinates
+    # TODO check how funciton works 
+    def follow_path(self):
         nxt_waypt = [2.3, 4.5, 6]
         current_waypt = [2.3, 3, 6]
         # relative next waypoint ID  = next waypoint relative to the current waypoint 
         relative_waypoint_coordinate = (nxt_waypt[0] - current_waypt[0], nxt_waypt[1] - current_waypt[1]) 
         # convert to angle (relative next waypoint id)
-        heading_angle = self.convert_to_angle(relative_waypoint_coordinate)
-        # angle of heading minus the current heading of the drone 
-        direction = (drone_angle - heading_angle) + 180
-        place = direction/10
-        path_follow_brainwave[place] = 9 
-        path_follow_brainwave[place-1] = 3
-        path_follow_brainwave[place+1] = 3 
+        head_angl = self.convert_to_angle(relative_waypoint_coordinate)
+        # angle of heading converted to a position in list of brainwave
+        wave_centr_place = round(head_angl/10)
+        # use create_normal_curve to generate the brainwave 
+        path_follow_brainwave = self.create_normal_curve(wave_centr_place)
         return path_follow_brainwave
     
-    def avoid_obstacle(self):
-        obs_avoid_cmd = None
-        # if there is an obstacle at the direnction in which we are heading within the range of the drone 
-        # adjust the velocity commands so that we can avoid the obstacle 
-        return obs_avoid_cmd
+    #TODO right now the function just replces the value if it gets new reading from the lidar. Since tere is one value for eaxh 10 degrees might want to optimize it 
+    # to test just path following comment out the "for loop"
+    def avoid_obstacle(self, lidar_scan):
+        # function creates brainwave for obstacle avoidance
+        # assumes the zero alighs with the 0 of the drone heading direction
+        # what to expect from lidar [{ "x": 1.23, "y": 4.56, "distance": 5.67, "intensity": 10 },  { "x": -2.34, "y": 0.12, "distance": 3.45, "intensity": 5 },  { "x": 6.78, "y": -9.87, "distance": 10.11, "intensity": 8 }]
+        obst_avoid_brainwave = np.zeros(36)
+        for point in lidar_scan:
+            obstacle_coordinates = (point["x"], point["y"])
+            # converts to degree plus rounds it to the place
+            obstacle_place = round(self.convert_to_angle(obstacle_coordinates) / 10) 
+            obst_avoid_brainwave[obstacle_place] = point["distace"] * -1 
+        return obst_avoid_brainwave
     
-    def convert_to_angle(x, y):
-        # converts x andpyhton command window y coordinate into angle
+    
+    def convert_to_angle(self, x, y):
+        # converts x and y coordinate into angle
         angle = math.degrees(math.atan2(y, x))
         return angle
-        
-    def normal_distribution(mean=0, sd=1, low=0, upp=10): 
-        #generates 36 values 
-        return truncnorm(
-            (low - mean) / sd, (upp - mean) / sd, loc=mean, scale=sd)
+    
+    #TODO might give out an erros when cener of the wave is placed at index of "0"
+    def create_normal_curve(self, position):
+    # Generate a list of 36 values with a normal curve at specified position 
+    # used to generate a brainwave for path_following
+        values = np.zeros(36)
+        curve_start = position -2 
+        curve_end = position + 3
+        x = np.linspace(-2, 2, 5)
+        curve = norm.pdf(x)
+        peak_index = np.argmax(curve)  # Find the index of the peak value
+        shift = position - (curve_start + peak_index)
+        curve_start += shift
+        curve_end += shift
+        return values
     
     def move(self, cmd_vel, task_handle, feedback_msg):
         # publish control command
@@ -397,18 +414,20 @@ class AgentControlNode(Node):
         bin_align_cmd = None
         # ....
         return bin_align_cmd
-    
+
     def align_to_drop_off(self, bin_pose):
         drop_align_cmd = None
         # ....
         return drop_align_cmd
 
-
+    # TODO check if the barinwaves are merged properly
+    # to test out just the path following take a look at comments above avoid_obstacle function 
     def blend_commands(self, path_follow_brainwave, 
-                       obs_avoid_cmd,
+                       obs_avoid_brainwave, 
                        bin_align_cmd):
-        heading_index = max(path_follow_brainwave)
-        heading_angle = ((path_follow_brainwave.index(heading_index))*10)-180
+        # merges the brainwaves to determine the best directio of heading 
+        merged_brainwave = np.array(path_follow_brainwave) + np.array(obs_avoid_brainwave)
+        heading_angle = ((merged_brainwave.index(max(merged_brainwave)))*10)-180
         velocity = 1
         final_cmd = Twist()
         final_cmd.linear.x = math.cos(heading_angle) * velocity
