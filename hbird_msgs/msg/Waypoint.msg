@@ -6,3 +6,5 @@ string  id
 geometry_msgs/Vector3 position
 
 float32 heading
+
+string type
