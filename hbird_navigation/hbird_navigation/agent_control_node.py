@@ -17,14 +17,6 @@ from .scripts.utils import State as StatePy
 
 
 #TODO:
-# 1. Add all the right message types to the pub/subs
-# 2. Define the state message type (would be custom one). Align with the State data class?
-# 3. Do we need a control_cycle??
-# 4. Fix the action server... ActionType, etc.
-# 5. Set the initial states, etc.
-# 6. Write out all callbacks to store (and process sensor data)
-# 7. How to handle cancellations?? line 94-98
-# 8. Figure out cycle time for the main execution loop
 
 
 
@@ -82,14 +74,15 @@ class AgentControlNode(Node):
         self._last_scan = None
         self._last_front_camera_image = None
         self._last_rear_camera_image = None
+        self._current_path = None
 
         self._cycle_duration = 0.1
 
         # represents the state as in a finite state diagram/flowchart
-        self.stage = 0 # 0 is before takeoff and after landing, drone is not actively completing a task
-        self.cancelled = False
-        self.curr_waypoint_id = "A1"
-        self.task_complete
+        self._stage = 0 # 0 is before takeoff and after landing, drone is not actively completing a task
+        self._cancelled = False
+        self._curr_waypoint = None
+        self._task_complete = False
 
         self.get_logger().info('Waiting for a task from Ground Control...')
 
@@ -118,17 +111,23 @@ class AgentControlNode(Node):
         # update task handle
         self._task_handle = task_handle
 
-        # self.get_logger().info(self._task_handle.request.path)
+        # set the desired path
+        self._current_path = self._task_handle.request.path.data
+        # self.get_logger().info(self._current_path)
+        self.get_logger().info('Length of path: {}'.format(len(self._current_path)))
+
+        # find current waypoint
+        self._curr_waypoint = self.find_current_waypoint()
 
         # create a feedback message instance
         feedback_msg = AgentTask.Feedback()
 
         # initiate take off and update stage
-        self.stage = 1
+        self._stage = 1
         stall_threshold = 120  # 2 minutes
 
         # execute the action
-        while not self.task_complete:
+        while not self._task_complete:
 
             # check if ground control has cancelled this task
             if task_handle.is_cancel_requested:
@@ -142,14 +141,14 @@ class AgentControlNode(Node):
                 return AgentTask.Result()
             
 
-            match self.stage:
-                case 1:
-                    self.takeoff()
-                    self.stage = 2
-                case 2:
-                    while self.stage == 2:
+            match self._stage:
+                case 1: # drone takes off...
+                    self.take_off()
+                    self._stage = 2
+                case 2: # follow path by tracking waypoints
+                    while self._stage == 2:
                          # get next waypoint
-                         nxt_waypoint_id = self.find_next_waypoint(self.curr_waypoint_id)
+                         self._nxt_waypoint_id = self.find_next_waypoint(self._curr_waypoint)
 
                          # start timer to track how long agent has been traveling to next waypoint
                          t1 = time.time()
@@ -171,19 +170,19 @@ class AgentControlNode(Node):
                             self.move(self, cmd_vel, task_handle, feedback_msg)
 
                             # check whether drone is within range of new way point
-                            if self.reached_waypoint(nxt_waypoint_id):
+                            if self.reached_waypoint(self._nxt_waypoint_id):
                                 # update current waypoint
-                                self.curr_waypoint_id = nxt_waypoint_id
+                                self._curr_waypoint_id = self._nxt_waypoint_id
                                 # if "pick"
-                                #   self.stage = 3
+                                #   self._stage = 3
                                 #   in_btwn_waypoints = False
 
                                 # else if "drop"
-                                #   self.stage = 4
+                                #   self._stage = 4
                                 #   in_btwn_waypoints = False
 
                                 # else if "end"
-                                #   self.stage = 5
+                                #   self._stage = 5
                                 #   in_btwn_waypoints = False
 
                                 # else:
@@ -193,13 +192,13 @@ class AgentControlNode(Node):
                                 t2 = time.time()
                                 elapsed = t2 - t1
                                 if elapsed > stall_threshold:
-                                    self.cancelled = True
-                                    self.stage = 6
+                                    self._cancelled = True
+                                    self._stage = 6
                                     in_btwn_waypoints = False
                 case 3:
                     bin_aligned = False
                     parcel_picked = False
-                    while self.stage == 3:
+                    while self._stage == 3:
                         if bin_aligned:
                             # call function to pick parcel and set parcel_picked to True
 
@@ -208,7 +207,7 @@ class AgentControlNode(Node):
                             # and directly updating the stage after picking the parcel)
                             if parcel_picked:  
                                 # prepare to continue path following
-                                self.stage = 2
+                                self._stage = 2
                                 break
                         else:
                         
@@ -227,7 +226,7 @@ class AgentControlNode(Node):
                 case 4:
                     parcel_dropped = False
                     drop_aligned = False
-                    while self.stage == 4:
+                    while self._stage == 4:
                         if drop_aligned:
                             # call function to drop parcel and set parcel_dropped to True
 
@@ -236,7 +235,7 @@ class AgentControlNode(Node):
                             # and directly updating the stage after dropping the parcel)
                             if parcel_dropped:  
                                 # prepare to continue path following
-                                self.stage = 2
+                                self._stage = 2
                                 break
                         else:
                             cmd_vel = self.compute_control_cmds("dropping off")
@@ -251,17 +250,17 @@ class AgentControlNode(Node):
                             # than checking for alignment after every motor command
                 case 5:
                     self.land()
-                    self.task_complete = True
+                    self._task_complete = True
                     # status = success
-                    if self.cancelled:
+                    if self._cancelled:
                         # status = fail
                         self.get_logger().info("Failed to complete task.")
                     
                     self.get_logger().info("Task completed successfully.")
-                    self.stage = 0
+                    self._stage = 0
                 case 6:
-                    # recalculate path wiArducam 1080P Day & Night Vision USB Camera for Computerth no pick or drop waypoints
-                    self.stage = 2
+                    # recalculate path with no pick or drop waypoints
+                    self._stage = 2
                 case _:
                     # default case
                     return
@@ -291,7 +290,7 @@ class AgentControlNode(Node):
         match mode:
             case "path following":
                 # get path following velocity
-                path_follow_vel_cmd = self.follow_path(nxt_waypoint_id)
+                path_follow_vel_cmd = self.follow_path(self.nxt_waypoint_id)
 
                 # get obstacle avoidance velocity
                 obst_avoid_vel_cmd = self.avoid_obstacle()
@@ -338,6 +337,25 @@ class AgentControlNode(Node):
         # calculate next waypoint
         return nxt_waypoint_id
     
+
+    def find_current_waypoint(self):
+        """Returns the corresponding (or closest) node/waypoint to the given position"""
+        curr_waypoint = None
+        min_dist = 999
+
+        # iterate over all the nodes/wapoints in the path to find the one closest to the [x,y,z] point
+        for wp in self._current_path:
+            dist = self.calculate_euclidean_dist(wp.position, self._state.position)
+
+            if dist < min_dist:
+                curr_waypoint = wp
+                min_dist = dist
+                self.get_logger().info('Min node is {} and distance is {}'.format(curr_waypoint.id, min_dist))
+        print("-------------------")
+
+        return curr_waypoint
+
+
     # TODO figure out how to convert waypoint ID to coordinates
     # TODO check how funciton works 
     def follow_path(self):
@@ -464,8 +482,14 @@ class AgentControlNode(Node):
         state.psi = ros_state.orientation.z
 
 
-    def task_complete(self):
-        return False
+    def calculate_euclidean_dist(self, pos1, pos2):
+        """Returns the euclidean distance between two geometry_msg type positions"""
+        return np.sqrt((pos1.x - pos2.x)**2 + 
+                       (pos1.y - pos2.y)**2 +
+                       (pos1.z - pos2.z)**2)
+
+    # def task_complete(self):
+    #     return False
     
     def task_cancelled(self, task_handle):
         # check if ground control has cancelled this task
@@ -473,7 +497,7 @@ class AgentControlNode(Node):
             task_handle.canceled()
             self.get_logger().info('Task canceled')
 
-        self.cancelled = True
+        self._cancelled = True
     
     def take_off(self):
         self.get_logger().info('Taking Off...')
@@ -486,7 +510,7 @@ class AgentControlNode(Node):
 
 
     def check_bin_alignment(self):
-        well_aligned = false
+        well_aligned = False
         #using camera and infrared, determine if agent is well_aligned and ready to grab parcel
 
         
