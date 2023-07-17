@@ -5,6 +5,9 @@ from rclpy.executors import MultiThreadedExecutor
 from rcl_interfaces.msg import ParameterDescriptor
 
 import time
+import math
+import numpy as np 
+from scipy.stats import norm
 
 from hbird_msgs.action import AgentTask
 from hbird_msgs.msg import Waypoint, State
@@ -82,6 +85,12 @@ class AgentControlNode(Node):
 
         self._cycle_duration = 0.1
 
+        # represents the state as in a finite state diagram/flowchart
+        self.stage = 0 # 0 is before takeoff and after landing, drone is not actively completing a task
+        self.cancelled = False
+        self.curr_waypoint_id = "A1"
+        self.task_complete
+
         self.get_logger().info('Waiting for a task from Ground Control...')
 
 
@@ -105,6 +114,7 @@ class AgentControlNode(Node):
         """Execute a goal."""
         self.get_logger().info('Task received! Executing task...')
         
+        
         # update task handle
         self._task_handle = task_handle
 
@@ -113,8 +123,12 @@ class AgentControlNode(Node):
         # create a feedback message instance
         feedback_msg = AgentTask.Feedback()
 
+        # initiate take off and update stage
+        self.stage = 1
+        stall_threshold = 120  # 2 minutes
+
         # execute the action
-        while not self.task_complete():
+        while not self.task_complete:
 
             # check if ground control has cancelled this task
             if task_handle.is_cancel_requested:
@@ -123,27 +137,139 @@ class AgentControlNode(Node):
                 # it seems to me that the GCS has to give a path back to base with the cancel order
 
                 # perform a return to home location maneuver??
+                # get a new path 
 
                 return AgentTask.Result()
             
-            # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            # perform the task...
 
-            cmd_vel = self.compute_control_cmds()
+            match self.stage:
+                case 1:
+                    self.takeoff()
+                    self.stage = 2
+                case 2:
+                    while self.stage == 2:
+                         # get next waypoint
+                         nxt_waypoint_id = self.find_next_waypoint(self.curr_waypoint_id)
 
-            # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                         # start timer to track how long agent has been traveling to next waypoint
+                         t1 = time.time()
 
-            # publish control command
-            self._cmd_vel_publisher.publish(cmd_vel)
+                         # set state to traveling between waypoints
+                         in_btwn_waypoints = True
+                         
+                         while in_btwn_waypoints:
 
-            # publish the feedback (state of the agent)
-            feedback_msg.state = self._state
-            feedback_msg.agent_id = self._agent_id
-            task_handle.publish_feedback(feedback_msg)
+                            # check the task has not been cancelled
+                            if self.task_cancelled(task_handle):
+                                return AgentTask.Result()
+                            
+                            # proceed if it has not
 
-            # set a cycle time
+                            cmd_vel = self.compute_control_cmds("path following")
+                            
+                            # send velocity commands to Crazyflie to move drone
+                            self.move(self, cmd_vel, task_handle, feedback_msg)
+
+                            # check whether drone is within range of new way point
+                            if self.reached_waypoint(nxt_waypoint_id):
+                                # update current waypoint
+                                self.curr_waypoint_id = nxt_waypoint_id
+                                # if "pick"
+                                #   self.stage = 3
+                                #   in_btwn_waypoints = False
+
+                                # else if "drop"
+                                #   self.stage = 4
+                                #   in_btwn_waypoints = False
+
+                                # else if "end"
+                                #   self.stage = 5
+                                #   in_btwn_waypoints = False
+
+                                # else:
+                                #   in_btwn_waypoints = False
+                            else:
+                                # if traveling between waypoints is taking too long, consider the task cancelled or get a new path
+                                t2 = time.time()
+                                elapsed = t2 - t1
+                                if elapsed > stall_threshold:
+                                    self.cancelled = True
+                                    self.stage = 6
+                                    in_btwn_waypoints = False
+                case 3:
+                    bin_aligned = False
+                    parcel_picked = False
+                    while self.stage == 3:
+                        if bin_aligned:
+                            # call function to pick parcel and set parcel_picked to True
+
+                            # check that parcel has been successfully picked up (this check 
+                            # could be in drop function tho eliminating need for parcel_picked variable 
+                            # and directly updating the stage after picking the parcel)
+                            if parcel_picked:  
+                                # prepare to continue path following
+                                self.stage = 2
+                                break
+                        else:
+                        
+                            cmd_vel = self.compute_control_cmds("picking up")
+                            
+                            # send velocity commands to Crazyflie to move drone until aligned with bin
+                            self.move(self, cmd_vel, task_handle, feedback_msg)
+                            
+                            # call function to check when drone is aligned to bin and set bin_aligned to True
+
+                            # NOTE: compute_control_cmds should maybe be called in a loop inside of a new function
+                            # that only exits when the drone is sufficiently aligned to the pick up bin rather 
+                            # than checking for alignment after every motor command
+
+                        
+                case 4:
+                    parcel_dropped = False
+                    drop_aligned = False
+                    while self.stage == 4:
+                        if drop_aligned:
+                            # call function to drop parcel and set parcel_dropped to True
+
+                            # check that parcel has been successfully dropped down (this check 
+                            # could be in drop function tho eliminating need for parcel_dropped variable 
+                            # and directly updating the stage after dropping the parcel)
+                            if parcel_dropped:  
+                                # prepare to continue path following
+                                self.stage = 2
+                                break
+                        else:
+                            cmd_vel = self.compute_control_cmds("dropping off")
+                            
+                            # send velocity commands to Crazyflie to move drone until aligned with bin
+                            self.move(self, cmd_vel, task_handle, feedback_msg)
+                            
+                            # call function to know when drone is aligned to drop_off bin and set drop_aligned to True
+
+                            # NOTE: compute_control_cmds should maybe be called in a loop inside of a new function
+                            # that only exits when the drone is sufficiently aligned to the drop off bin rather 
+                            # than checking for alignment after every motor command
+                case 5:
+                    self.land()
+                    self.task_complete = True
+                    # status = success
+                    if self.cancelled:
+                        # status = fail
+                        self.get_logger().info("Failed to complete task.")
+                    
+                    self.get_logger().info("Task completed successfully.")
+                    self.stage = 0
+                case 6:
+                    # recalculate path wiArducam 1080P Day & Night Vision USB Camera for Computerth no pick or drop waypoints
+                    self.stage = 2
+                case _:
+                    # default case
+                    return
+
+            # set a cycle time/ mayb not need anymore
             time.sleep(self._cycle_duration)
 
+        
         # indicate that the action has succeeded
         task_handle.succeed()
 
@@ -156,66 +282,165 @@ class AgentControlNode(Node):
         return result
 
     
-    def compute_control_cmds(self):
+    def compute_control_cmds(self, mode):
 
         final_cmd_vel = Twist()
         final_cmd_vel.linear.x = 0.1
-        final_cmd_vel.angular.z = 0.1
+        final_cmd_vel.angular.z = 0.1 
 
-        # path following:
-        # nxt_waypoint_id = self.find_next_waypoint(curr_waypoint_id)
-        # path_follow_vel_cmd = self.follow_path(nxt_waypoint_id,)
+        match mode:
+            case "path following":
+                # get path following velocity
+                path_follow_vel_cmd = self.follow_path(nxt_waypoint_id)
 
-        # # obstacle avoidance:
-        # obst_avoid_vel_cmd = self.avoid_obstacle()
+                # get obstacle avoidance velocity
+                obst_avoid_vel_cmd = self.avoid_obstacle()
 
-        # # bin alignment:
-        # bin_pose = self.localize_bin()
-        # bin_align_vel_cmd = self.align_to_bin(bin_pose)
+                bin_align_vel_cmd = None
+                drop_align_vel_cmd = None
+            case "picking up":
+                # get obstacle avoidance velocity
+                obst_avoid_vel_cmd = self.avoid_obstacle()
 
-        # # arbiter:
-        # final_cmd_vel = self.blend_commands(path_follow_vel_cmd, 
-        #                                     obst_avoid_vel_cmd,
-        #                                     bin_align_vel_cmd)
+                # get bin alignment velocity
+                bin_pose = self.localize_bin()
+                bin_align_vel_cmd = self.align_to_bin(bin_pose)
 
+                path_follow_vel_cmd = None
+                drop_align_vel_cmd = None
+            case "dropping off":
+                # get obstacle avoidance velocity
+                obst_avoid_vel_cmd = self.avoid_obstacle()
+
+                # get dropoff alignment velocity
+                drop_pose = self.localize_drop()
+                drop_align_vel_cmd = self.align_to_drop_off(drop_pose)
+
+                path_follow_vel_cmd = None
+                bin_align_vel_cmd = None
+            case _:
+                self.get_logger().info("unknown arbiter mode")
+
+        # arbiter:
+        final_cmd_vel = self.blend_commands(path_follow_vel_cmd, 
+                                            obst_avoid_vel_cmd,
+                                            bin_align_vel_cmd,
+                                            drop_align_vel_cmd)
+
+        
         return final_cmd_vel
 
 
+    
     def find_next_waypoint(self, current_waypoint_id):
         nxt_waypoint_id = None
-        # ....
+        
+        # calculate next waypoint
         return nxt_waypoint_id
     
-
-    def follow_path(self, nxt_waypoint_id):
-        path_follow_cmd = None
-        # ...
-        return path_follow_cmd
+    # TODO figure out how to convert waypoint ID to coordinates
+    # TODO check how funciton works 
+    def follow_path(self):
+        nxt_waypt = [2.3, 4.5, 6]
+        current_waypt = [2.3, 3, 6]
+        # relative next waypoint ID  = next waypoint relative to the current waypoint 
+        relative_waypoint_coordinate = (nxt_waypt[0] - current_waypt[0], nxt_waypt[1] - current_waypt[1]) 
+        # convert to angle (relative next waypoint id)
+        head_angl = self.convert_to_angle(relative_waypoint_coordinate)
+        # angle of heading converted to a position in list of brainwave
+        wave_centr_place = round(head_angl/10)
+        # use create_normal_curve to generate the brainwave 
+        path_follow_brainwave = self.create_normal_curve(wave_centr_place)
+        return path_follow_brainwave
     
-
-    def avoid_obstacle(self):
-        obs_avoid_cmd = None
-        # ....
-        return obs_avoid_cmd
+    #TODO right now the function just replces the value if it gets new reading from the lidar. Since tere is one value for eaxh 10 degrees might want to optimize it 
+    # to test just path following comment out the "for loop"
+    def avoid_obstacle(self, lidar_scan):
+        # function creates brainwave for obstacle avoidance
+        # assumes the zero alighs with the 0 of the drone heading direction
+        # what to expect from lidar [{ "x": 1.23, "y": 4.56, "distance": 5.67, "intensity": 10 },  { "x": -2.34, "y": 0.12, "distance": 3.45, "intensity": 5 },  { "x": 6.78, "y": -9.87, "distance": 10.11, "intensity": 8 }]
+        obst_avoid_brainwave = np.zeros(36)
+        for point in lidar_scan:
+            obstacle_coordinates = (point["x"], point["y"])
+            # converts to degree plus rounds it to the place
+            obstacle_place = round(self.convert_to_angle(obstacle_coordinates) / 10) 
+            obst_avoid_brainwave[obstacle_place] = point["distace"] * -1 
+        return obst_avoid_brainwave
     
+    
+    def convert_to_angle(self, x, y):
+        # converts x and y coordinate into angle
+        angle = math.degrees(math.atan2(y, x))
+        return angle
+    
+    #TODO might give out an erros when cener of the wave is placed at index of "0"
+    def create_normal_curve(self, position):
+    # Generate a list of 36 values with a normal curve at specified position 
+    # used to generate a brainwave for path_following
+        values = np.zeros(36)
+        curve_start = position -2 
+        curve_end = position + 3
+        x = np.linspace(-2, 2, 5)
+        curve = norm.pdf(x)
+        peak_index = np.argmax(curve)  # Find the index of the peak value
+        shift = position - (curve_start + peak_index)
+        curve_start += shift
+        curve_end += shift
+        return values
+    
+    def move(self, cmd_vel, task_handle, feedback_msg):
+        # publish control command
+        self._cmd_vel_publisher.publish(cmd_vel)
 
+        # update the state
+
+        # publish the feedback (state of the agent)
+        feedback_msg.state = self._state
+        feedback_msg.agent_id = self._agent_id
+        task_handle.publish_feedback(feedback_msg)
+
+    def reached_waypoint(self, nxt_waypoint_id):
+        # code to check whether we have reached the next waypoint
+        # get current location
+        # comp current location to waypoint location
+        # if close, return True, else return False
+        return False
+    
     def localize_bin(self):
         bin_pose = None
         # ....
         return bin_pose
+    
+    def localize_drop(self):
+        drop_pose = None
+        # ....
+        return drop_pose
     
 
     def align_to_bin(self, bin_pose):
         bin_align_cmd = None
         # ....
         return bin_align_cmd
-    
 
-    def blend_commands(self, path_follow_cmd, 
-                       obs_avoid_cmd,
-                       bin_align_cmd):
-        final_cmd = None
+    def align_to_drop_off(self, bin_pose):
+        drop_align_cmd = None
         # ....
+        return drop_align_cmd
+
+    # TODO check if the barinwaves are merged properly
+    # to test out just the path following take a look at comments above avoid_obstacle function 
+    def blend_commands(self, path_follow_brainwave, 
+                       obs_avoid_brainwave, 
+                       bin_align_cmd):
+        # merges the brainwaves to determine the best directio of heading 
+        merged_brainwave = np.array(path_follow_brainwave) + np.array(obs_avoid_brainwave)
+        heading_angle = ((merged_brainwave.index(max(merged_brainwave)))*10)-180
+        velocity = 1
+        final_cmd = Twist()
+        final_cmd.linear.x = math.cos(heading_angle) * velocity
+        final_cmd.linear.y = math.sin(heading_angle) * velocity
+        final_cmd.angular.z = 0
+        #final_cmd = None 
         return final_cmd
     
 
@@ -242,6 +467,31 @@ class AgentControlNode(Node):
     def task_complete(self):
         return False
     
+    def task_cancelled(self, task_handle):
+        # check if ground control has cancelled this task
+        if task_handle.is_cancel_requested:
+            task_handle.canceled()
+            self.get_logger().info('Task canceled')
+
+        self.cancelled = True
+    
+    def take_off(self):
+        self.get_logger().info('Taking Off...')
+        #crazyflie method to initiate takeoff
+        # update stage to start path following
+
+    def land(self):
+        self.get_logger().info('Landing...')
+        # crazyflie method to initiate landing
+
+
+    def check_bin_alignment(self):
+        well_aligned = false
+        #using camera and infrared, determine if agent is well_aligned and ready to grab parcel
+
+        
+
+    
 
 def main(args=None):
     rclpy.init(args=args)
@@ -262,3 +512,4 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
