@@ -108,6 +108,8 @@ class AgentControlNode(Node):
         # update task handle
         self._task_handle = task_handle
 
+        # self.get_logger().info(self._task_handle.request.path)
+
         # create a feedback message instance
         feedback_msg = AgentTask.Feedback()
 
