@@ -118,7 +118,7 @@ class AgentControlNode(Node):
 
         # find current waypoint
         # self._curr_waypoint = self.find_current_waypoint()
-        self._curr_waypoint = self._current_path[1]
+        self._curr_waypoint = self._current_path[0]
         self.get_logger().info('Current Waypoint: {}'.format(self._curr_waypoint))
 
         # create a feedback message instance
@@ -169,7 +169,7 @@ class AgentControlNode(Node):
                             cmd_vel = self.compute_control_cmds("path following")
                             
                             # send velocity commands to Crazyflie to move drone
-                            self.move(self, cmd_vel, task_handle, feedback_msg)
+                            self.move(cmd_vel, task_handle, feedback_msg)
 
                             # check whether drone is within range of new way point
                             if self.reached_waypoint(self._nxt_waypoint):
@@ -217,7 +217,7 @@ class AgentControlNode(Node):
                     #         cmd_vel = self.compute_control_cmds("picking up")
                             
                     #         # send velocity commands to Crazyflie to move drone until aligned with bin
-                    #         self.move(self, cmd_vel, task_handle, feedback_msg)
+                    #         self.move(cmd_vel, task_handle, feedback_msg)
                             
                     #         # call function to check when drone is aligned to bin and set bin_aligned to True
 
@@ -246,7 +246,7 @@ class AgentControlNode(Node):
                     #         cmd_vel = self.compute_control_cmds("dropping off")
                             
                     #         # send velocity commands to Crazyflie to move drone until aligned with bin
-                    #         self.move(self, cmd_vel, task_handle, feedback_msg)
+                    #         self.move(cmd_vel, task_handle, feedback_msg)
                             
                     #         # call function to know when drone is aligned to drop_off bin and set drop_aligned to True
 
@@ -369,33 +369,36 @@ class AgentControlNode(Node):
     # TODO check how funciton works 
     def follow_path(self):
         # relative next waypoint ID  = next waypoint relative to the current waypoint 
-        relative_waypoint_y = self._nxt_waypoint.position.y - self._curr_waypoint.position.y 
-        relative_waypoint_x = self._nxt_waypoint.position.x - self._curr_waypoint.position.x
-        relative_waypoint_z = self._nxt_waypoint.position.z - self._curr_waypoint.position.z
+        global_delta_y = self._nxt_waypoint.position.y - self._curr_waypoint.position.y 
+        global_delta_x = self._nxt_waypoint.position.x - self._curr_waypoint.position.x
+        global_delta_z = self._nxt_waypoint.position.z - self._curr_waypoint.position.z
         self.get_logger().info("Current Waypoint X: {}".format(self._curr_waypoint.position.x))
         self.get_logger().info("Current Waypoint Y: {}".format(self._curr_waypoint.position.y))
         self.get_logger().info("Current Waypoint Z: {}".format(self._curr_waypoint.position.z))
         self.get_logger().info("Next Waypoint X: {}".format(self._nxt_waypoint.position.x))
         self.get_logger().info("Next Waypoint Y: {}".format(self._nxt_waypoint.position.y))
         self.get_logger().info("Next Waypoint Z: {}".format(self._nxt_waypoint.position.z))
-        self.get_logger().info("Relative Waypoint X: {}".format(relative_waypoint_x))
-        self.get_logger().info("Relative Waypoint Y: {}".format(relative_waypoint_y))
-        self.get_logger().info("Relative Waypoint Z: {}".format(relative_waypoint_z))
+        self.get_logger().info("Change in X: {}".format(global_delta_x))
+        self.get_logger().info("Change in Y: {}".format(global_delta_y))
+        self.get_logger().info("Change in Z: {}".format(global_delta_z))
+
         # convert to angle (relative next waypoint id)
-        head_angl = self.convert_to_angle(relative_waypoint_x, relative_waypoint_y)
+        head_angle = self.convert_to_angle(global_delta_x, global_delta_y)
         # angle of heading converted to a position in list of brainwave
-        if head_angl == 360: 
-            wave_centr_place = 0 
+        if head_angle == 360: 
+            head_angle_index = 0 
         else: 
-            wave_centr_place = round(head_angl/10)
-        xy_distance = math.sqrt(pow(relative_waypoint_x, 2) + pow(relative_waypoint_y, 2))
-        if xy_distance == 0: 
-            z_elevation_angle_rad = math.pi/2
+            head_angle_index = round(head_angle/10)
+        # xy direction represent distance between drone location and waypoint in xy plane
+        xy_distance = math.sqrt(pow(global_delta_x, 2) + pow(global_delta_y, 2))
+        if xy_distance == 0: # waypoint is directly above drone
+            angle_of_elevation_rad = math.pi/2
         else: 
-            z_elevation_angle_rad = math.asin(relative_waypoint_z/xy_distance)
+            # angle_of_elevation_rad = math.atan2(global_delta_z/xy_distance)
+            angle_of_elevation_rad = math.asin(global_delta_z/xy_distance)
         # use create_normal_curve to generate the brainwave 
-        path_follow_brainwave = list(self.create_normal_curve(wave_centr_place))
-        path_follow_brainwave.append(z_elevation_angle_rad)
+        path_follow_brainwave = list(self.create_normal_curve(head_angle_index))
+        path_follow_brainwave.append(angle_of_elevation_rad)
         self.get_logger().info("Pathfollowing Brainwave {}".format(path_follow_brainwave))
         return path_follow_brainwave
     
@@ -419,12 +422,13 @@ class AgentControlNode(Node):
     
     
     def convert_to_angle(self, x, y):
-        # converts x and y coordinate into angle
+        # find angle between delta_x vector and delta_y vector
         angle = math.degrees(math.atan2(y, x)) + 180
         self.get_logger().info("Angle of Attack: {}".format(angle))
+        # outputs angle from 0 to 360
         return angle
     
-    #TODO might give out an erros when cener of the wave is placed at index of "0"
+    #TODO might give out an error when center of the wave is placed at index of "0"
     def create_normal_curve(self, position):
     # Generate a list of 36 values with a normal curve at specified position 
     # used to generate a brainwave for path_following
@@ -447,7 +451,7 @@ class AgentControlNode(Node):
         # publish control command
         self._cmd_vel_publisher.publish(cmd_vel)
 
-        # update the state
+        # update the state by getting location data
 
         # publish the feedback (state of the agent)
         feedback_msg.state = self._state
@@ -492,11 +496,12 @@ class AgentControlNode(Node):
         merged_brainwave = list(np.array(path_follow_brainwave) + np.array(obs_avoid_brainwave))
         heading_angle = ((merged_brainwave.index(max(merged_brainwave)))*10)
         heading_angle_rad = math.radians(heading_angle)
+        self.get_logger().info("Final Heading {}".format(heading_angle))
         velocity = 1
         final_cmd = Twist()
-        # instead of multiplying by '1' try to go to follow path and switch substraction of current and previous (might work, needs to be tried out)
-        final_cmd.linear.x = -1 * math.cos(heading_angle_rad) * velocity
-        final_cmd.linear.y = -1 * math.sin(heading_angle_rad) * velocity
+        # instead of multiplying by '-1' try to go to follow path and switch substraction of current and previous (might work, needs to be tried out)
+        final_cmd.linear.x = math.cos(heading_angle_rad) * velocity
+        final_cmd.linear.y = math.sin(heading_angle_rad) * velocity
         final_cmd.linear.z = math.sin(z_angle_rad) * velocity
         self.get_logger().info("Linear X: {}, Linear Y: {}, Linear Z: {}".format(final_cmd.linear.x, final_cmd.linear.y, final_cmd.linear.z))
         final_cmd.angular.z = 0.0
