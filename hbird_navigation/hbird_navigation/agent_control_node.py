@@ -372,15 +372,15 @@ class AgentControlNode(Node):
         global_delta_y = self._nxt_waypoint.position.y - self._curr_waypoint.position.y 
         global_delta_x = self._nxt_waypoint.position.x - self._curr_waypoint.position.x
         global_delta_z = self._nxt_waypoint.position.z - self._curr_waypoint.position.z
-        self.get_logger().info("Current Waypoint X: {}".format(self._curr_waypoint.position.x))
-        self.get_logger().info("Current Waypoint Y: {}".format(self._curr_waypoint.position.y))
-        self.get_logger().info("Current Waypoint Z: {}".format(self._curr_waypoint.position.z))
-        self.get_logger().info("Next Waypoint X: {}".format(self._nxt_waypoint.position.x))
-        self.get_logger().info("Next Waypoint Y: {}".format(self._nxt_waypoint.position.y))
-        self.get_logger().info("Next Waypoint Z: {}".format(self._nxt_waypoint.position.z))
-        self.get_logger().info("Change in X: {}".format(global_delta_x))
-        self.get_logger().info("Change in Y: {}".format(global_delta_y))
-        self.get_logger().info("Change in Z: {}".format(global_delta_z))
+        # self.get_logger().info("Current Waypoint X: {}".format(self._curr_waypoint.position.x))
+        # self.get_logger().info("Current Waypoint Y: {}".format(self._curr_waypoint.position.y))
+        # self.get_logger().info("Current Waypoint Z: {}".format(self._curr_waypoint.position.z))
+        # self.get_logger().info("Next Waypoint X: {}".format(self._nxt_waypoint.position.x))
+        # self.get_logger().info("Next Waypoint Y: {}".format(self._nxt_waypoint.position.y))
+        # self.get_logger().info("Next Waypoint Z: {}".format(self._nxt_waypoint.position.z))
+        # self.get_logger().info("Change in X: {}".format(global_delta_x))
+        # self.get_logger().info("Change in Y: {}".format(global_delta_y))
+        # self.get_logger().info("Change in Z: {}".format(global_delta_z))
 
         # convert to angle (relative next waypoint id)
         head_angle = self.convert_to_angle(global_delta_x, global_delta_y)
@@ -399,7 +399,7 @@ class AgentControlNode(Node):
         # use create_normal_curve to generate the brainwave 
         path_follow_brainwave = list(self.create_normal_curve(head_angle_index))
         path_follow_brainwave.append(angle_of_elevation_rad)
-        self.get_logger().info("Pathfollowing Brainwave {}".format(path_follow_brainwave))
+        # self.get_logger().info("Pathfollowing Brainwave {}".format(path_follow_brainwave))
         return path_follow_brainwave
     
     
@@ -424,7 +424,7 @@ class AgentControlNode(Node):
     def convert_to_angle(self, x, y):
         # find angle between delta_x vector and delta_y vector
         angle = math.degrees(math.atan2(y, x)) + 180
-        self.get_logger().info("Angle of Attack: {}".format(angle))
+        # self.get_logger().info("Angle of Attack: {}".format(angle))
         # outputs angle from 0 to 360
         return angle
     
@@ -496,7 +496,7 @@ class AgentControlNode(Node):
         merged_brainwave = list(np.array(path_follow_brainwave) + np.array(obs_avoid_brainwave))
         heading_angle = ((merged_brainwave.index(max(merged_brainwave)))*10)
         heading_angle_rad = math.radians(heading_angle)
-        self.get_logger().info("Final Heading {}".format(heading_angle))
+        # self.get_logger().info("Final Heading {}".format(heading_angle))
         velocity = 1
         final_cmd = Twist()
         # instead of multiplying by '-1' try to go to follow path and switch substraction of current and previous (might work, needs to be tried out)
