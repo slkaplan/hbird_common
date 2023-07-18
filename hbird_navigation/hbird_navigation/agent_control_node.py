@@ -151,6 +151,7 @@ class AgentControlNode(Node):
                 case 2: # follow path by tracking waypoints
                     while self._stage == 2:
                          # get next waypoint
+                         self.get_logger().info('Getting next waypoint...')
                          self._next_waypoint = self.find_next_waypoint()
 
                          # start timer to track how long agent has been traveling to next waypoint
@@ -172,9 +173,9 @@ class AgentControlNode(Node):
                             # send velocity commands to Crazyflie to move drone
                             self.move(cmd_vel, task_handle, feedback_msg)
 
-                            self.get_logger().info('State: {}, {}, {}'.format(self._state.position.x,
-                                                                            self._state.position.y,
-                                                                            self._state.position.z))
+                            # self.get_logger().info('State: {}, {}, {}'.format(self._state.position.x,
+                            #                                                 self._state.position.y,
+                            #                                                 self._state.position.z))
 
                             # check whether drone is within range of new way point
                             if self.reached_waypoint():
@@ -296,8 +297,8 @@ class AgentControlNode(Node):
     def compute_control_cmds(self, mode):
 
         final_cmd_vel = Twist()
-        final_cmd_vel.linear.x = 0.1
-        final_cmd_vel.angular.z = 0.1 
+        # final_cmd_vel.linear.x = 0.1
+        # final_cmd_vel.angular.z = 0.1 
 
         match mode:
             case "path following":
@@ -455,7 +456,7 @@ class AgentControlNode(Node):
     def move(self, cmd_vel, task_handle, feedback_msg):
         # publish control command
         self._cmd_vel_publisher.publish(cmd_vel)
-        self.get_logger().info("Moving agent...")
+        # self.get_logger().info("Moving agent...")
         # update the state by getting location data
 
         # publish the feedback (state of the agent)
@@ -468,7 +469,7 @@ class AgentControlNode(Node):
         # get current location
         # comp current location to waypoint location
         # if close, return True, else return False
-        distance_threshold = 0.1
+        distance_threshold = 0.2
         delta_x = self._next_waypoint.position.x - self._state.position.x
         delta_y = self._next_waypoint.position.y - self._state.position.y
         wypt_distance = math.sqrt(pow(delta_x, 2) + pow(delta_y, 2))
@@ -518,10 +519,21 @@ class AgentControlNode(Node):
         velocity = 0.3
         final_cmd = Twist()
         # instead of multiplying by '-1' try to go to follow path and switch substraction of current and previous (might work, needs to be tried out)
-        final_cmd.linear.x = math.cos(heading_angle_rad) * velocity
-        final_cmd.linear.y = math.sin(heading_angle_rad) * velocity
+
+
+        delta_x = self._next_waypoint.position.x - self._state.position.x
+        delta_y = self._next_waypoint.position.y - self._state.position.y
+        wypt_distance = math.sqrt(pow(delta_x, 2) + pow(delta_y, 2))
+        KP = 1.0
+
+        # final_cmd.linear.x = math.cos(heading_angle_rad) * velocity
+        # final_cmd.linear.y = math.sin(heading_angle_rad) * velocity
+        # final_cmd.linear.z = math.sin(z_angle_rad) * velocity
+
+        final_cmd.linear.x = math.cos(heading_angle_rad) * velocity * KP * abs(delta_x)
+        final_cmd.linear.y = math.sin(heading_angle_rad) * velocity * KP * abs(delta_y)
         final_cmd.linear.z = math.sin(z_angle_rad) * velocity
-        self.get_logger().info("Linear X: {}, Linear Y: {}, Linear Z: {}".format(final_cmd.linear.x, final_cmd.linear.y, final_cmd.linear.z))
+        # self.get_logger().info("Linear X: {}, Linear Y: {}, Linear Z: {}".format(final_cmd.linear.x, final_cmd.linear.y, final_cmd.linear.z))
         final_cmd.angular.z = 0.0
         #final_cmd = None 
         return final_cmd
