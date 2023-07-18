@@ -82,6 +82,7 @@ class AgentControlNode(Node):
         self._stage = 0 # 0 is before takeoff and after landing, drone is not actively completing a task
         self._cancelled = False
         self._curr_waypoint = None
+        self._next_waypoint = None
         self._task_complete = False
 
         self.get_logger().info('Waiting for a task from Ground Control...')
@@ -150,7 +151,7 @@ class AgentControlNode(Node):
                 case 2: # follow path by tracking waypoints
                     while self._stage == 2:
                          # get next waypoint
-                         self._nxt_waypoint = self.find_next_waypoint()
+                         self._next_waypoint = self.find_next_waypoint()
 
                          # start timer to track how long agent has been traveling to next waypoint
                          t1 = time.time()
@@ -176,9 +177,9 @@ class AgentControlNode(Node):
                                                                             self._state.position.z))
 
                             # check whether drone is within range of new way point
-                            if self.reached_waypoint(self._nxt_waypoint):
+                            if self.reached_waypoint():
                                 # update current waypoint
-                                self._curr_waypoint = self._nxt_waypoint
+                                self._curr_waypoint = self._next_waypoint
                                 if self._curr_waypoint.type == 'pick':
                                     self._stage = 3
                                     in_btwn_waypoints = False
@@ -345,7 +346,7 @@ class AgentControlNode(Node):
     def find_next_waypoint(self) :
         # intakes the current node and finds the next one
         nxt_waypoint_indx = self._current_path.index(self._curr_waypoint) + 1
-        print(f"Next Waypoint Index: {nxt_waypoint_indx}")
+        self.get_logger().info('Next Waypoint Index {}:'.format(nxt_waypoint_indx))
         nxt_waypoint = self._current_path[nxt_waypoint_indx]
         # calculate next waypoint
         return nxt_waypoint
@@ -373,15 +374,15 @@ class AgentControlNode(Node):
     # TODO check how funciton works 
     def follow_path(self):
         # relative next waypoint ID  = next waypoint relative to the current waypoint 
-        global_delta_y = self._nxt_waypoint.position.y - self._curr_waypoint.position.y 
-        global_delta_x = self._nxt_waypoint.position.x - self._curr_waypoint.position.x
-        global_delta_z = self._nxt_waypoint.position.z - self._curr_waypoint.position.z
+        global_delta_y = self._next_waypoint.position.y - self._curr_waypoint.position.y 
+        global_delta_x = self._next_waypoint.position.x - self._curr_waypoint.position.x
+        global_delta_z = self._next_waypoint.position.z - self._curr_waypoint.position.z
         # self.get_logger().info("Current Waypoint X: {}".format(self._curr_waypoint.position.x))
         # self.get_logger().info("Current Waypoint Y: {}".format(self._curr_waypoint.position.y))
         # self.get_logger().info("Current Waypoint Z: {}".format(self._curr_waypoint.position.z))
-        # self.get_logger().info("Next Waypoint X: {}".format(self._nxt_waypoint.position.x))
-        # self.get_logger().info("Next Waypoint Y: {}".format(self._nxt_waypoint.position.y))
-        # self.get_logger().info("Next Waypoint Z: {}".format(self._nxt_waypoint.position.z))
+        # self.get_logger().info("Next Waypoint X: {}".format(self._next_waypoint.position.x))
+        # self.get_logger().info("Next Waypoint Y: {}".format(self._next_waypoint.position.y))
+        # self.get_logger().info("Next Waypoint Z: {}".format(self._next_waypoint.position.z))
         # self.get_logger().info("Change in X: {}".format(global_delta_x))
         # self.get_logger().info("Change in Y: {}".format(global_delta_y))
         # self.get_logger().info("Change in Z: {}".format(global_delta_z))
@@ -454,7 +455,7 @@ class AgentControlNode(Node):
     def move(self, cmd_vel, task_handle, feedback_msg):
         # publish control command
         self._cmd_vel_publisher.publish(cmd_vel)
-
+        self.get_logger().info("Moving agent...")
         # update the state by getting location data
 
         # publish the feedback (state of the agent)
@@ -462,11 +463,24 @@ class AgentControlNode(Node):
         feedback_msg.agent_id = self._agent_id
         task_handle.publish_feedback(feedback_msg)
 
-    def reached_waypoint(self, nxt_waypoint):
+    def reached_waypoint(self):
         # code to check whether we have reached the next waypoint
         # get current location
         # comp current location to waypoint location
         # if close, return True, else return False
+        distance_threshold = 0.1
+        delta_x = self._next_waypoint.position.x - self._state.position.x
+        delta_y = self._next_waypoint.position.y - self._state.position.y
+        wypt_distance = math.sqrt(pow(delta_x, 2) + pow(delta_y, 2))
+        if wypt_distance <= distance_threshold:
+            self.get_logger().info("Drone has reached next waypoint!")
+            return True
+        else:
+            return False
+
+
+        
+
         return False
     
     def localize_bin(self):
