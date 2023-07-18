@@ -118,7 +118,7 @@ class AgentControlNode(Node):
 
         # find current waypoint
         # self._curr_waypoint = self.find_current_waypoint()
-        self._curr_waypoint = self._current_path[1]
+        self._curr_waypoint = self._current_path[6]
         self.get_logger().info('Current Waypoint: {}'.format(self._curr_waypoint))
 
         # create a feedback message instance
@@ -380,7 +380,10 @@ class AgentControlNode(Node):
         # convert to angle (relative next waypoint id)
         head_angl = self.convert_to_angle(relative_waypoint_x, relative_waypoint_y)
         # angle of heading converted to a position in list of brainwave
-        wave_centr_place = round(head_angl/10) 
+        if head_angl == 360: 
+            wave_centr_place = 0 
+        else: 
+            wave_centr_place = round(head_angl/10)
         # use create_normal_curve to generate the brainwave 
         path_follow_brainwave = self.create_normal_curve(wave_centr_place)
         self.get_logger().info("Pathfollowing Brainwave {}".format(path_follow_brainwave))
@@ -474,11 +477,12 @@ class AgentControlNode(Node):
         # merges the brainwaves to determine the best directio of heading 
         merged_brainwave = list(np.array(path_follow_brainwave) + np.array(obs_avoid_brainwave))
         heading_angle = ((merged_brainwave.index(max(merged_brainwave)))*10)
+        heading_angle_rad = math.radians(heading_angle)
         velocity = 1
         final_cmd = Twist()
-        final_cmd.linear.x = math.cos(heading_angle) * velocity
+        final_cmd.linear.x = -1 * math.cos(heading_angle_rad) * velocity
+        final_cmd.linear.y = -1 * math.sin(heading_angle_rad) * velocity
         self.get_logger().info("Linear X: {}, Linear Y {}".format(final_cmd.linear.x, final_cmd.linear.y))
-        final_cmd.linear.y = math.sin(heading_angle) * velocity
         final_cmd.angular.z = 0.0
         #final_cmd = None 
         return final_cmd
