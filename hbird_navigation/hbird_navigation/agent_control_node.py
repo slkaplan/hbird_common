@@ -171,6 +171,10 @@ class AgentControlNode(Node):
                             # send velocity commands to Crazyflie to move drone
                             self.move(cmd_vel, task_handle, feedback_msg)
 
+                            self.get_logger().info('State: {}, {}, {}'.format(self._state.position.x,
+                                                                            self._state.position.y,
+                                                                            self._state.position.z))
+
                             # check whether drone is within range of new way point
                             if self.reached_waypoint(self._nxt_waypoint):
                                 # update current waypoint
@@ -497,7 +501,7 @@ class AgentControlNode(Node):
         heading_angle = ((merged_brainwave.index(max(merged_brainwave)))*10)
         heading_angle_rad = math.radians(heading_angle)
         # self.get_logger().info("Final Heading {}".format(heading_angle))
-        velocity = 1
+        velocity = 0.3
         final_cmd = Twist()
         # instead of multiplying by '-1' try to go to follow path and switch substraction of current and previous (might work, needs to be tried out)
         final_cmd.linear.x = math.cos(heading_angle_rad) * velocity
