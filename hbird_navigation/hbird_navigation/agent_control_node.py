@@ -118,7 +118,7 @@ class AgentControlNode(Node):
 
         # find current waypoint
         # self._curr_waypoint = self.find_current_waypoint()
-        self._curr_waypoint = self._current_path[6]
+        self._curr_waypoint = self._current_path[1]
         self.get_logger().info('Current Waypoint: {}'.format(self._curr_waypoint))
 
         # create a feedback message instance
@@ -253,7 +253,7 @@ class AgentControlNode(Node):
                     #         # NOTE: compute_control_cmds should maybe be called in a loop inside of a new function
                     #         # that only exits when the drone is sufficiently aligned to the drop off bin rather 
                     #         # than checking for alignment after every motor command
-                    self.get_logger().info('Package dropped!! Woohoo...')
+                    self.get_logger().info('Package dropped!! Phowww...')
                     self._stage = 2               
                 case 5:
                     self.land()
@@ -371,12 +371,16 @@ class AgentControlNode(Node):
         # relative next waypoint ID  = next waypoint relative to the current waypoint 
         relative_waypoint_y = self._nxt_waypoint.position.y - self._curr_waypoint.position.y 
         relative_waypoint_x = self._nxt_waypoint.position.x - self._curr_waypoint.position.x
+        relative_waypoint_z = self._nxt_waypoint.position.z - self._curr_waypoint.position.z
         self.get_logger().info("Current Waypoint X: {}".format(self._curr_waypoint.position.x))
         self.get_logger().info("Current Waypoint Y: {}".format(self._curr_waypoint.position.y))
+        self.get_logger().info("Current Waypoint Z: {}".format(self._curr_waypoint.position.z))
         self.get_logger().info("Next Waypoint X: {}".format(self._nxt_waypoint.position.x))
         self.get_logger().info("Next Waypoint Y: {}".format(self._nxt_waypoint.position.y))
+        self.get_logger().info("Next Waypoint Z: {}".format(self._nxt_waypoint.position.z))
         self.get_logger().info("Relative Waypoint X: {}".format(relative_waypoint_x))
         self.get_logger().info("Relative Waypoint Y: {}".format(relative_waypoint_y))
+        self.get_logger().info("Relative Waypoint Z: {}".format(relative_waypoint_z))
         # convert to angle (relative next waypoint id)
         head_angl = self.convert_to_angle(relative_waypoint_x, relative_waypoint_y)
         # angle of heading converted to a position in list of brainwave
@@ -384,10 +388,15 @@ class AgentControlNode(Node):
             wave_centr_place = 0 
         else: 
             wave_centr_place = round(head_angl/10)
+        xy_distance = math.sqrt(pow(relative_waypoint_x, 2) + pow(relative_waypoint_y, 2))
+        z_elevation_angle_rad = math.asin(relative_waypoint_z/xy_distance)
         # use create_normal_curve to generate the brainwave 
-        path_follow_brainwave = self.create_normal_curve(wave_centr_place)
+        path_follow_brainwave = list(self.create_normal_curve(wave_centr_place))
+        path_follow_brainwave.append(z_elevation_angle_rad)
         self.get_logger().info("Pathfollowing Brainwave {}".format(path_follow_brainwave))
         return path_follow_brainwave
+    
+    
     
     #TODO right now the function just replces the value if it gets new reading from the lidar. Since tere is one value for eaxh 10 degrees might want to optimize it 
     # to test just path following comment out the "for loop"
@@ -472,17 +481,21 @@ class AgentControlNode(Node):
 
     # TODO check if the barinwaves are merged properly
     # to test out just the path following take a look at comments above avoid_obstacle function 
-    def blend_commands(self, path_follow_brainwave, 
+    def blend_commands(self, path_follow_brainwave,
                        obs_avoid_brainwave):
         # merges the brainwaves to determine the best directio of heading 
+        z_angle_rad = path_follow_brainwave[-1]
+        path_follow_brainwave.pop(-1)
         merged_brainwave = list(np.array(path_follow_brainwave) + np.array(obs_avoid_brainwave))
         heading_angle = ((merged_brainwave.index(max(merged_brainwave)))*10)
         heading_angle_rad = math.radians(heading_angle)
         velocity = 1
         final_cmd = Twist()
+        # instead of multiplying by '1' try to go to follow path and switch substraction of current and previous (might work, needs to be tried out)
         final_cmd.linear.x = -1 * math.cos(heading_angle_rad) * velocity
         final_cmd.linear.y = -1 * math.sin(heading_angle_rad) * velocity
-        self.get_logger().info("Linear X: {}, Linear Y {}".format(final_cmd.linear.x, final_cmd.linear.y))
+        final_cmd.linear.z = math.sin(z_angle_rad) * velocity
+        self.get_logger().info("Linear X: {}, Linear Y: {}, Linear Z: {}".format(final_cmd.linear.x, final_cmd.linear.y, final_cmd.linear.z))
         final_cmd.angular.z = 0.0
         #final_cmd = None 
         return final_cmd
