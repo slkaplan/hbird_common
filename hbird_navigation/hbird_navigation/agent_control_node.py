@@ -478,11 +478,6 @@ class AgentControlNode(Node):
             return True
         else:
             return False
-
-
-        
-
-        return False
     
     def localize_bin(self):
         bin_pose = None
