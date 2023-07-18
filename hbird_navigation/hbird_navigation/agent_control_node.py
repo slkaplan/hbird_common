@@ -389,7 +389,10 @@ class AgentControlNode(Node):
         else: 
             wave_centr_place = round(head_angl/10)
         xy_distance = math.sqrt(pow(relative_waypoint_x, 2) + pow(relative_waypoint_y, 2))
-        z_elevation_angle_rad = math.asin(relative_waypoint_z/xy_distance)
+        if xy_distance == 0: 
+            z_elevation_angle_rad = math.pi/2
+        else: 
+            z_elevation_angle_rad = math.asin(relative_waypoint_z/xy_distance)
         # use create_normal_curve to generate the brainwave 
         path_follow_brainwave = list(self.create_normal_curve(wave_centr_place))
         path_follow_brainwave.append(z_elevation_angle_rad)
