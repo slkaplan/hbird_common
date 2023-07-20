@@ -77,6 +77,9 @@ class AgentControlNode(Node):
         self._current_path = None
 
         self._cycle_duration = 0.1
+        self._Kp, self._landing_height_threshold = 1.0, 0.3
+        self._v_max = 0.2
+        self._vz_max = 0.15 # maximum velocity for take-off and landing
 
         # represents the state as in a finite state diagram/flowchart
         self._stage = 0 # 0 is before takeoff and after landing, drone is not actively completing a task
@@ -84,6 +87,7 @@ class AgentControlNode(Node):
         self._curr_waypoint = None
         self._next_waypoint = None
         self._task_complete = False
+        self.nxt_waypoint_idx = 0
 
         self.get_logger().info('Waiting for a task from Ground Control...')
 
@@ -108,7 +112,6 @@ class AgentControlNode(Node):
         """Execute a goal."""
         self.get_logger().info('Task received! Executing task...')
         
-        
         # update task handle
         self._task_handle = task_handle
 
@@ -119,11 +122,11 @@ class AgentControlNode(Node):
 
         # find current waypoint
         # self._curr_waypoint = self.find_current_waypoint()
-        self._curr_waypoint = self._current_path[0]
+        self._curr_waypoint = self._current_path[self.nxt_waypoint_idx]
         self.get_logger().info('Current Waypoint: {}'.format(self._curr_waypoint))
 
         # create a feedback message instance
-        feedback_msg = AgentTask.Feedback()
+        self._feedback_msg = AgentTask.Feedback()
 
         # initiate take off and update stage
         self._stage = 1
@@ -131,6 +134,10 @@ class AgentControlNode(Node):
 
         # execute the action
         while not self._task_complete:
+
+            # if self.nxt_waypoint_idx > len(self._current_path)-4:
+            #     self.get_logger().info('In main execution loop...')
+
 
             # check if ground control has cancelled this task
             if task_handle.is_cancel_requested:
@@ -153,6 +160,11 @@ class AgentControlNode(Node):
                          # get next waypoint
                          self.get_logger().info('Getting next waypoint...')
                          self._next_waypoint = self.find_next_waypoint()
+                         
+                        #  if self.nxt_waypoint_idx > len(self._current_path)-4:
+                        #     self.get_logger().info('In stage 2 loop...')
+
+
 
                          # start timer to track how long agent has been traveling to next waypoint
                          t1 = time.time()
@@ -161,6 +173,12 @@ class AgentControlNode(Node):
                          in_btwn_waypoints = True
                          
                          while in_btwn_waypoints:
+                            
+                            # if self.nxt_waypoint_idx > len(self._current_path)-4:
+                            #     self.get_logger().info('In in between loop...')
+
+
+
 
                             # check the task has not been cancelled
                             if self.task_cancelled(task_handle):
@@ -171,7 +189,7 @@ class AgentControlNode(Node):
                             cmd_vel = self.compute_control_cmds("path following")
                             
                             # send velocity commands to Crazyflie to move drone
-                            self.move(cmd_vel, task_handle, feedback_msg)
+                            self.move(cmd_vel)
 
                             # self.get_logger().info('State: {}, {}, {}'.format(self._state.position.x,
                             #                                                 self._state.position.y,
@@ -182,7 +200,7 @@ class AgentControlNode(Node):
                                 # update current waypoint
                                 self._curr_waypoint = self._next_waypoint
                                 if self._curr_waypoint.type == 'pick':
-                                    self._stage = 3
+                                    self._stage = 3                                    
                                     in_btwn_waypoints = False
 
                                 elif self._curr_waypoint.type == 'drop':
@@ -223,7 +241,7 @@ class AgentControlNode(Node):
                     #         cmd_vel = self.compute_control_cmds("picking up")
                             
                     #         # send velocity commands to Crazyflie to move drone until aligned with bin
-                    #         self.move(cmd_vel, task_handle, feedback_msg)
+                    #         self.move(cmd_vel
                             
                     #         # call function to check when drone is aligned to bin and set bin_aligned to True
 
@@ -252,7 +270,7 @@ class AgentControlNode(Node):
                     #         cmd_vel = self.compute_control_cmds("dropping off")
                             
                     #         # send velocity commands to Crazyflie to move drone until aligned with bin
-                    #         self.move(cmd_vel, task_handle, feedback_msg)
+                    #         self.move(cmd_vel)
                             
                     #         # call function to know when drone is aligned to drop_off bin and set drop_aligned to True
 
@@ -344,11 +362,30 @@ class AgentControlNode(Node):
 
 
     
-    def find_next_waypoint(self) :
+    def find_next_waypoint(self):
         # intakes the current node and finds the next one
-        nxt_waypoint_indx = self._current_path.index(self._curr_waypoint) + 1
-        self.get_logger().info('Next Waypoint Index {}:'.format(nxt_waypoint_indx))
-        nxt_waypoint = self._current_path[nxt_waypoint_indx]
+        # self.nxt_waypoint_idx = self._current_path.index(self._curr_waypoint) + 1
+        self.nxt_waypoint_idx += 1
+        self.get_logger().info('Next Waypoint Index {}:'.format(self.nxt_waypoint_idx))
+
+        # check if next waypoint is the same as the current
+        while (self._curr_waypoint == self._current_path[self.nxt_waypoint_idx] 
+                and self.nxt_waypoint_idx < len(self._current_path)-1):
+            # delay for 5 seconds
+            self.get_logger().info('Pick/Drop Operation...')
+            # update current waypoint
+            self._curr_waypoint = self._current_path[self.nxt_waypoint_idx]
+            self.nxt_waypoint_idx += 1
+            # command a hover behavior
+            self.hover() #TODO: This is temporary... ideally drone should change altitude to pick/drop
+            time.sleep(5)
+            
+        # land if you're at the end
+        if self.nxt_waypoint_idx >= len(self._current_path)-1:
+            # self.land()
+            self._stage = 5 
+    
+        nxt_waypoint = self._current_path[self.nxt_waypoint_idx]
         # calculate next waypoint
         return nxt_waypoint
     
@@ -443,7 +480,8 @@ class AgentControlNode(Node):
         curve_end = position + 3
         x = np.linspace(-2, 2, 5)
         curve = norm.pdf(x)
-        if position > 1: 
+        if position > 1 and position < len(values) - 4: 
+            # self.get_logger().info('position is: {0}'.format(position))
             values[curve_start:curve_end] = curve
         elif position == 1:
             values[-1] = curve[1]
@@ -451,38 +489,50 @@ class AgentControlNode(Node):
         elif position == 0:
             values[-2:] = curve[0:2]
             values[0:3] = curve[2:]
+        else:
+            #TODO: Very temporary fix
+            values[position] = 1
         return values
 
-    def move(self, cmd_vel, task_handle, feedback_msg):
+    def move(self, cmd_vel):
         # publish control command
         self._cmd_vel_publisher.publish(cmd_vel)
         # self.get_logger().info("Moving agent...")
         # update the state by getting location data
 
         # publish the feedback (state of the agent)
-        feedback_msg.state = self._state
-        feedback_msg.agent_id = self._agent_id
-        task_handle.publish_feedback(feedback_msg)
+        self._feedback_msg.state = self._state
+        self._feedback_msg.agent_id = self._agent_id
+        self._task_handle.publish_feedback(self._feedback_msg)
+
+
+    def hover(self):
+        cmd_vel = Twist()
+        cmd_vel.linear.x = 0.0
+        cmd_vel.linear.y = 0.0
+
+        self.move(cmd_vel)
+
+
 
     def reached_waypoint(self):
         # code to check whether we have reached the next waypoint
         # get current location
         # comp current location to waypoint location
         # if close, return True, else return False
-        distance_threshold = 0.2
+        distance_threshold = 0.5
         delta_x = self._next_waypoint.position.x - self._state.position.x
         delta_y = self._next_waypoint.position.y - self._state.position.y
         wypt_distance = math.sqrt(pow(delta_x, 2) + pow(delta_y, 2))
+
+        if self.nxt_waypoint_idx > len(self._current_path)-3:
+            self.get_logger().info("Distance to next waypoint: {}".format(wypt_distance))
+
         if wypt_distance <= distance_threshold:
             self.get_logger().info("Drone has reached next waypoint!")
             return True
         else:
             return False
-
-
-        
-
-        return False
     
     def localize_bin(self):
         bin_pose = None
@@ -516,7 +566,7 @@ class AgentControlNode(Node):
         heading_angle = ((merged_brainwave.index(max(merged_brainwave)))*10)
         heading_angle_rad = math.radians(heading_angle)
         # self.get_logger().info("Final Heading {}".format(heading_angle))
-        velocity = 0.3
+        # velocity = 0.2
         final_cmd = Twist()
         # instead of multiplying by '-1' try to go to follow path and switch substraction of current and previous (might work, needs to be tried out)
 
@@ -524,15 +574,15 @@ class AgentControlNode(Node):
         delta_x = self._next_waypoint.position.x - self._state.position.x
         delta_y = self._next_waypoint.position.y - self._state.position.y
         wypt_distance = math.sqrt(pow(delta_x, 2) + pow(delta_y, 2))
-        KP = 1.0
+        # KP = 1.0
 
-        # final_cmd.linear.x = math.cos(heading_angle_rad) * velocity
-        # final_cmd.linear.y = math.sin(heading_angle_rad) * velocity
-        # final_cmd.linear.z = math.sin(z_angle_rad) * velocity
+        # final_cmd.linear.x = math.cos(heading_angle_rad) * self._v_max
+        # final_cmd.linear.y = math.sin(heading_angle_rad) * self._v_max
+        # final_cmd.linear.z = math.sin(z_angle_rad) * self._vz_max
 
-        final_cmd.linear.x = math.cos(heading_angle_rad) * velocity * KP * abs(delta_x)
-        final_cmd.linear.y = math.sin(heading_angle_rad) * velocity * KP * abs(delta_y)
-        final_cmd.linear.z = math.sin(z_angle_rad) * velocity
+        final_cmd.linear.x = self.clamp(math.cos(heading_angle_rad) * self._v_max * self._Kp * abs(delta_x), -self._v_max, self._v_max)
+        final_cmd.linear.y = self.clamp(math.sin(heading_angle_rad) * self._v_max * self._Kp * abs(delta_y), -self._v_max, self._v_max)
+        final_cmd.linear.z = 0.0
         # self.get_logger().info("Linear X: {}, Linear Y: {}, Linear Z: {}".format(final_cmd.linear.x, final_cmd.linear.y, final_cmd.linear.z))
         final_cmd.angular.z = 0.0
         #final_cmd = None 
@@ -583,14 +633,30 @@ class AgentControlNode(Node):
 
     def land(self):
         self.get_logger().info('Landing...')
-        # crazyflie method to initiate landing
+
+        cmd_vel = Twist()
+        cmd_vel.linear.x = 0.0
+        cmd_vel.linear.y = 0.0
+
+        while (self._state.position.z**2) > self._landing_height_threshold:
+            cmd_vel.linear.z = np.clip(self._Kp * (-self._state.position.z), -self._vz_max, self._vz_max)
+
+            # send velocity to agent using move 
+            self.move(cmd_vel)
+            time.sleep(0.1) #TODO: How to standardize the publishing rate??
+
+        cmd_vel.linear.z = 0.0
+        self.move(cmd_vel)
+        self.get_logger().info('Landing complete!')
 
 
     def check_bin_alignment(self):
         well_aligned = False
         #using camera and infrared, determine if agent is well_aligned and ready to grab parcel
 
-        
+    
+    def clamp(self, value, value_min, value_max):
+        return min(max(value, value_min), value_max)
 
     
 
