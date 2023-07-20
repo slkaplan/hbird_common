@@ -200,11 +200,11 @@ class AgentControlNode(Node):
                                 # update current waypoint
                                 self._curr_waypoint = self._next_waypoint
                                 if self._curr_waypoint.type == 'pick':
-                                    self._stage = 3                                    
+                                    # self._stage = 3
                                     in_btwn_waypoints = False
 
                                 elif self._curr_waypoint.type == 'drop':
-                                    self._stage = 4
+                                    # self._stage = 4
                                     in_btwn_waypoints = False
 
                                 elif self._curr_waypoint.type == 'end':
@@ -573,8 +573,8 @@ class AgentControlNode(Node):
 
         delta_x = self._next_waypoint.position.x - self._state.position.x
         delta_y = self._next_waypoint.position.y - self._state.position.y
-        wypt_distance = math.sqrt(pow(delta_x, 2) + pow(delta_y, 2))
-        # KP = 1.0
+        # wypt_distance = math.sqrt(pow(delta_x, 2) + pow(delta_y, 2))
+        KP = 1.0
 
         # final_cmd.linear.x = math.cos(heading_angle_rad) * self._v_max
         # final_cmd.linear.y = math.sin(heading_angle_rad) * self._v_max
