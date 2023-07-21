@@ -78,9 +78,11 @@ class AgentControlNode(Node):
 
         self._cycle_duration = 0.1
         self._Kp = 1.0
-        self._landing_height_threshold = 0.3
+        self._landing_height_threshold = 0.2
         self._v_max = 0.2
         self._vz_max = 0.15 # maximum velocity for take-off and landing
+        self._lift_height = 1.5
+
 
         # represents the state as in a finite state diagram/flowchart
         self._stage = 0 # 0 is before takeoff and after landing, drone is not actively completing a task
@@ -389,12 +391,27 @@ class AgentControlNode(Node):
             self._curr_waypoint = self._current_path[self.nxt_waypoint_idx]
             self.nxt_waypoint_idx += 1
             # command a hover behavior
-            self.hover() #TODO: This is temporary... ideally drone should change altitude to pick/drop
+            # self.hover() #TODO: This is temporary... ideally drone should change altitude to pick/drop
+            # create velocity command to rise to bin
+            rise_cmd_vel = Twist()
+            rise_cmd_vel.linear.x = 0.0
+            rise_cmd_vel.linear.y = 0.0
+            # find distance from bin
+            delta_z = self._curr_waypoint.position.z - self._state.position.z
+            rise_cmd_vel.linear.z = 1.0
+            self.move(rise_cmd_vel)
+            # if reached bin, stop moving in z-direction
+            if abs(delta_z) <= 0.1:
+                rise_cmd_vel.linear.z = 0.0
+                self.move(rise_cmd_vel)
+                self._stage = 3
+
             time.sleep(5)
+
             
         # land if you're at the end
         if self.nxt_waypoint_idx >= len(self._current_path)-1:
-            # self.land()
+            self.land()
             self._stage = 5 
     
         nxt_waypoint = self._current_path[self.nxt_waypoint_idx]
@@ -640,8 +657,15 @@ class AgentControlNode(Node):
     
     def take_off(self):
         self.get_logger().info('Taking Off...')
-        #crazyflie method to initiate takeoff
-        # update stage to start path following
+
+        takeoff_cmd_vel = Twist()
+        takeoff_cmd_vel.linear.x = 0.0
+        takeoff_cmd_vel.linear.y = 0.0
+        while (self._state.position.z < self._lift_height):
+            # self.get_logger().info('Taking Off...')
+            delta_z = self._lift_height - self._state.position.z
+            takeoff_cmd_vel.linear.z = self._vz_max * np.clip(delta_z, 0.0, 1.0)
+            self.move(takeoff_cmd_vel)
 
     def land(self):
         self.get_logger().info('Landing...')
@@ -649,8 +673,9 @@ class AgentControlNode(Node):
         cmd_vel = Twist()
         cmd_vel.linear.x = 0.0
         cmd_vel.linear.y = 0.0
-
+        self.get_logger().info('Land command velocity created...')
         while (self._state.position.z**2) > self._landing_height_threshold:
+            self.get_logger().info('Height above threshold,...')
             cmd_vel.linear.z = np.clip(self._Kp * (-self._state.position.z), -self._vz_max, self._vz_max)
 
             # send velocity to agent using move 
