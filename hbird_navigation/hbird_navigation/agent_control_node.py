@@ -77,7 +77,8 @@ class AgentControlNode(Node):
         self._current_path = None
 
         self._cycle_duration = 0.1
-        self._Kp, self._landing_height_threshold = 1.0, 0.3
+        self._Kp = 1.0
+        self._landing_height_threshold = 0.3
         self._v_max = 0.2
         self._vz_max = 0.15 # maximum velocity for take-off and landing
 
@@ -200,11 +201,22 @@ class AgentControlNode(Node):
                                 # update current waypoint
                                 self._curr_waypoint = self._next_waypoint
                                 if self._curr_waypoint.type == 'pick':
-                                    # self._stage = 3
+                                    # create velocity command to rise to bin
+                                    rise_cmd_vel = Twist()
+                                    rise_cmd_vel.linear.x = 0.0
+                                    rise_cmd_vel.linear.y = 0.0
+                                    # find distance from bin
+                                    delta_z = self.curr_waypoint.position.z - self._state.position.z
+                                    rise_cmd_vel.linear.z = delta_z
+                                    self.move(rise_cmd_vel)
+                                    # if reached bin, stop moving in z-direction
+                                    if abs(delta_z) <= 0.1:
+                                        rise_cmd_vel.linear.z = 0.0
+                                        self.move(rise_cmd_vel)
+                                        self._stage = 3
                                     in_btwn_waypoints = False
-
                                 elif self._curr_waypoint.type == 'drop':
-                                    # self._stage = 4
+                                    self._stage = 4
                                     in_btwn_waypoints = False
 
                                 elif self._curr_waypoint.type == 'end':
