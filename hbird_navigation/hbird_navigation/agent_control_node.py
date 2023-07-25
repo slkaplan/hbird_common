@@ -161,7 +161,7 @@ class AgentControlNode(Node):
                 case 2: # follow path by tracking waypoints
                     while self._stage == 2:
                          # get next waypoint
-                         self.get_logger().info('Getting next waypoint...')
+                        #  self.get_logger().info('Getting next waypoint...')
                          self._next_waypoint = self.find_next_waypoint()
                          
                         #  if self.nxt_waypoint_idx > len(self._current_path)-4:
@@ -300,8 +300,8 @@ class AgentControlNode(Node):
                     if self._cancelled:
                         # status = fail
                         self.get_logger().info("Failed to complete task.")
-                    
-                    self.get_logger().info("Task completed successfully.")
+                    else: 
+                        self.get_logger().info("Task completed successfully.")
                     self._stage = 0
                 case 6:
                     # recalculate path with no pick or drop waypoints
@@ -398,10 +398,16 @@ class AgentControlNode(Node):
             rise_cmd_vel.linear.y = 0.0
             # find distance from bin
             delta_z = self._curr_waypoint.position.z - self._state.position.z
-            rise_cmd_vel.linear.z = 1.0
+            self.get_logger().info('Current Z is {}'.format(self._state.position.z))
+            self.get_logger().info('Waypoint Z is {}'.format(self._curr_waypoint.position.z))
+            self.get_logger().info('Bin_delta_z is {}'.format(delta_z))
+            Kp_z = 0.5
+            rise_cmd_vel.linear.z = Kp_z * np.clip(delta_z, -self._vz_max, self._vz_max)
+            self.get_logger().info('linear.z is {}'.format(rise_cmd_vel.linear.z))
             self.move(rise_cmd_vel)
             # if reached bin, stop moving in z-direction
-            if abs(delta_z) <= 0.1:
+            if abs(delta_z) <= 0.28:
+                self.get_logger().info('Reached bin...')
                 rise_cmd_vel.linear.z = 0.0
                 self.move(rise_cmd_vel)
                 self._stage = 3
@@ -676,12 +682,14 @@ class AgentControlNode(Node):
         self.get_logger().info('Land command velocity created...')
         while (self._state.position.z**2) > self._landing_height_threshold:
             self.get_logger().info('Height above threshold,...')
-            cmd_vel.linear.z = np.clip(self._Kp * (-self._state.position.z), -self._vz_max, self._vz_max)
+            Kp_z = 0.8
+            cmd_vel.linear.z = np.clip(Kp_z * (-self._state.position.z), -self._vz_max, self._vz_max)
 
             # send velocity to agent using move 
             self.move(cmd_vel)
             time.sleep(0.1) #TODO: How to standardize the publishing rate??
-
+        cmd_vel.linear.x = 0.0
+        cmd_vel.linear.y = 0.0
         cmd_vel.linear.z = 0.0
         self.move(cmd_vel)
         self.get_logger().info('Landing complete!')
