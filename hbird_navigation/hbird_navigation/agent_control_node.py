@@ -80,17 +80,19 @@ class AgentControlNode(Node):
         self._Kp = 1.0
         self._landing_height_threshold = 0.2
         self._v_max = 0.2
-        self._vz_max = 0.15 # maximum velocity for take-off and landing
-        self._lift_height = 1.5
+        self._vz_max = 0.13 # maximum velocity for take-off and landing
+        self._lift_height = 1.2
 
 
         # represents the state as in a finite state diagram/flowchart
         self._stage = 0 # 0 is before takeoff and after landing, drone is not actively completing a task
+        self._behavior = "waiting for task"
         self._cancelled = False
         self._curr_waypoint = None
         self._next_waypoint = None
         self._task_complete = False
         self.nxt_waypoint_idx = 0
+        self._stall_threshold = 120  # 2 minutes
 
         self.get_logger().info('Waiting for a task from Ground Control...')
 
@@ -131,9 +133,9 @@ class AgentControlNode(Node):
         # create a feedback message instance
         self._feedback_msg = AgentTask.Feedback()
 
-        # initiate take off and update stage
+        # initiate take off and update stage and behavior
         self._stage = 1
-        stall_threshold = 120  # 2 minutes
+        self._behavior = "taking off"
 
         # execute the action
         while not self._task_complete:
@@ -153,147 +155,75 @@ class AgentControlNode(Node):
 
                 return AgentTask.Result()
             
-
+            
             match self._stage:
                 case 1: # drone takes off...
                     self.take_off()
                     self._stage = 2
+                    self._behavior = "path following"
                 case 2: # follow path by tracking waypoints
                     while self._stage == 2:
                          # get next waypoint
-                        #  self.get_logger().info('Getting next waypoint...')
-                         self._next_waypoint = self.find_next_waypoint()
-                         
-                        #  if self.nxt_waypoint_idx > len(self._current_path)-4:
-                        #     self.get_logger().info('In stage 2 loop...')
-
-
-
-                         # start timer to track how long agent has been traveling to next waypoint
-                         t1 = time.time()
-
-                         # set state to traveling between waypoints
-                         in_btwn_waypoints = True
-                         
-                         while in_btwn_waypoints:
+                        self.get_logger().info('Getting next waypoint...')
+                        self.nxt_waypoint_idx += 1
+                        if self.nxt_waypoint_idx >= len(self._current_path):
+                            self._stage = 3
+                            self._behavior = "landing"
+                        else:
+                            self._next_waypoint = self.find_next_waypoint()
                             
-                            # if self.nxt_waypoint_idx > len(self._current_path)-4:
-                            #     self.get_logger().info('In in between loop...')
+                            # start timer to track how long agent has been traveling to next waypoint
+                            t1 = time.time()
 
+                            # set state to traveling between waypoints
+                            in_btwn_waypoints = True
+                            elapsed = 0.0
+                            while in_btwn_waypoints:
+                                # check the task has not been cancelled
+                                if self.task_cancelled(task_handle):
+                                    return AgentTask.Result()
+                                
 
+                                cmd_vel = self.compute_control_cmds()
+                                
+                                # send velocity commands to Crazyflie to move drone
+                                self.move(cmd_vel)
 
+                                # self.get_logger().info('State: {}, {}, {}'.format(self._state.position.x,
+                                #                                                 self._state.position.y,
+                                #                                                 self._state.position.z))
 
-                            # check the task has not been cancelled
-                            if self.task_cancelled(task_handle):
-                                return AgentTask.Result()
-                            
-                            # proceed if it has not
-
-                            cmd_vel = self.compute_control_cmds("path following")
-                            
-                            # send velocity commands to Crazyflie to move drone
-                            self.move(cmd_vel)
-
-                            # self.get_logger().info('State: {}, {}, {}'.format(self._state.position.x,
-                            #                                                 self._state.position.y,
-                            #                                                 self._state.position.z))
-
-                            # check whether drone is within range of new way point
-                            if self.reached_waypoint():
-                                # update current waypoint
-                                self._curr_waypoint = self._next_waypoint
-                                if self._curr_waypoint.type == 'pick':
-                                    # create velocity command to rise to bin
-                                    rise_cmd_vel = Twist()
-                                    rise_cmd_vel.linear.x = 0.0
-                                    rise_cmd_vel.linear.y = 0.0
-                                    # find distance from bin
-                                    delta_z = self.curr_waypoint.position.z - self._state.position.z
-                                    rise_cmd_vel.linear.z = delta_z
-                                    self.move(rise_cmd_vel)
-                                    # if reached bin, stop moving in z-direction
-                                    if abs(delta_z) <= 0.1:
-                                        rise_cmd_vel.linear.z = 0.0
-                                        self.move(rise_cmd_vel)
-                                        self._stage = 3
-                                    in_btwn_waypoints = False
-                                elif self._curr_waypoint.type == 'drop':
-                                    self._stage = 4
-                                    in_btwn_waypoints = False
-
-                                elif self._curr_waypoint.type == 'end':
-                                  self._stage = 5
-                                  in_btwn_waypoints = False
-
+                                # check whether drone is within range of new way point or if it's on a pick/drop waypoint
+                                if self.reached_waypoint() or (self._next_waypoint.id == self._curr_waypoint.id):
+                                    # update current waypoint
+                                    self._curr_waypoint = self._next_waypoint
+                                    if self._curr_waypoint.type == 'pick':
+                                        # self._stage = 3
+                                        self._behavior = "pick operation: rising to bin"
+                                        in_btwn_waypoints = False
+                                    elif self._curr_waypoint.type == 'drop':
+                                        # self._stage = 4
+                                        self._behavior = "drop operation"
+                                        in_btwn_waypoints = False
+                                    elif self._curr_waypoint.type == 'end':
+                                    #   self._stage = 5
+                                        self._behavior = "landing"
+                                        in_btwn_waypoints = False
+                                    else:
+                                        in_btwn_waypoints = False          
                                 else:
-                                  in_btwn_waypoints = False
-                                  
-                            else:
-                                # if traveling between waypoints is taking too long, consider the task cancelled or get a new path
-                                t2 = time.time()
-                                elapsed = t2 - t1
-                                if elapsed > stall_threshold:
-                                    self._cancelled = True
-                                    self._stage = 6
-                                    in_btwn_waypoints = False
+                                    # if traveling between waypoints is taking too long, consider the task cancelled or get a new path
+                                    t2 = time.time()
+                                    elapsed = t2 - t1
+                                    if (elapsed > self._stall_threshold):
+                                        self.get_logger().info("Elapsed time too long! Setting cancelled to True")
+                                        self._cancelled = True
+                                        self._stage = 4
+                                        in_btwn_waypoints = False
+                            elapsed = time.time() - t1
+                            self.get_logger().info("Elapsed time between waypoint {} and waypoint {}: {}".format(self.nxt_waypoint_idx-1, 
+                                                                                                                         self.nxt_waypoint_idx, elapsed))
                 case 3:
-                    # bin_aligned = False
-                    # parcel_picked = False
-                    # while self._stage == 3:
-                    #     if bin_aligned:
-                    #         # call function to pick parcel and set parcel_picked to True
-
-                    #         # check that parcel has been successfully picked up (this check 
-                    #         # could be in drop function tho eliminating need for parcel_picked variable 
-                    #         # and directly updating the stage after picking the parcel)
-                    #         if parcel_picked:  
-                    #             # prepare to continue path following
-                    #             self._stage = 2
-                    #             break
-                    #     else:
-                        
-                    #         cmd_vel = self.compute_control_cmds("picking up")
-                            
-                    #         # send velocity commands to Crazyflie to move drone until aligned with bin
-                    #         self.move(cmd_vel
-                            
-                    #         # call function to check when drone is aligned to bin and set bin_aligned to True
-
-                    #         # NOTE: compute_control_cmds should maybe be called in a loop inside of a new function
-                    #         # that only exits when the drone is sufficiently aligned to the pick up bin rather 
-                    #         # than checking for alignment after every motor command
-                    self.get_logger().info('Package picked!! Woohoo...')
-                    self._stage = 2
-
-                        
-                case 4:
-                    # parcel_dropped = False
-                    # drop_aligned = False
-                    # while self._stage == 4:
-                    #     if drop_aligned:
-                    #         # call function to drop parcel and set parcel_dropped to True
-
-                    #         # check that parcel has been successfully dropped down (this check 
-                    #         # could be in drop function tho eliminating need for parcel_dropped variable 
-                    #         # and directly updating the stage after dropping the parcel)
-                    #         if parcel_dropped:  
-                    #             # prepare to continue path following
-                    #             self._stage = 2
-                    #             break
-                    #     else:
-                    #         cmd_vel = self.compute_control_cmds("dropping off")
-                            
-                    #         # send velocity commands to Crazyflie to move drone until aligned with bin
-                    #         self.move(cmd_vel)
-                            
-                    #         # call function to know when drone is aligned to drop_off bin and set drop_aligned to True
-
-                    #         # NOTE: compute_control_cmds should maybe be called in a loop inside of a new function
-                    #         # that only exits when the drone is sufficiently aligned to the drop off bin rather 
-                    #         # than checking for alignment after every motor command
-                    self.get_logger().info('Package dropped!! Phowww...')
-                    self._stage = 2               
-                case 5:
                     self.land()
                     self._task_complete = True
                     # status = success
@@ -303,7 +233,7 @@ class AgentControlNode(Node):
                     else: 
                         self.get_logger().info("Task completed successfully.")
                     self._stage = 0
-                case 6:
+                case 4:
                     # recalculate path with no pick or drop waypoints
                     self._stage = 2
                 case _:
@@ -326,13 +256,13 @@ class AgentControlNode(Node):
         return result
 
     
-    def compute_control_cmds(self, mode):
+    def compute_control_cmds(self):
 
         final_cmd_vel = Twist()
         # final_cmd_vel.linear.x = 0.1
         # final_cmd_vel.angular.z = 0.1 
-
-        match mode:
+        # self.get_logger().info('behavior: {}'.format(self._behavior))
+        match self._behavior:
             case "path following":
                 # get path following velocity
                 path_follow_vel_cmd = self.follow_path()
@@ -340,147 +270,249 @@ class AgentControlNode(Node):
                 # get obstacle avoidance velocity
                 obst_avoid_vel_cmd = self.avoid_obstacle()
 
-                bin_align_vel_cmd = None
+                pick_align_vel_cmd = None
                 drop_align_vel_cmd = None
-            case "picking up":
+            case "pick operation: rising to bin" | "pick operation: aligning to bin" | "pick operation: picking parcel" | "pick operation: returning to highway" :
+                # get path following velocity
+                path_follow_vel_cmd = self.follow_path()
+
                 # get obstacle avoidance velocity
                 obst_avoid_vel_cmd = self.avoid_obstacle()
 
                 # get bin alignment velocity
-                bin_pose = self.localize_bin()
-                bin_align_vel_cmd = self.align_to_bin(bin_pose)
+                pick_align_vel_cmd = self.align_to_bin()
 
-                path_follow_vel_cmd = None
                 drop_align_vel_cmd = None
-            case "dropping off":
+            case "drop operation":
+                # get path following velocity
+                path_follow_vel_cmd = self.follow_path()
+
                 # get obstacle avoidance velocity
                 obst_avoid_vel_cmd = self.avoid_obstacle()
 
                 # get dropoff alignment velocity
-                drop_pose = self.localize_drop()
-                drop_align_vel_cmd = self.align_to_drop_off(drop_pose)
+                drop_align_vel_cmd = self.align_to_drop_off()
 
-                path_follow_vel_cmd = None
-                bin_align_vel_cmd = None
+                pick_align_vel_cmd = None
             case _:
                 self.get_logger().info("unknown arbiter mode")
 
         # arbiter:
         final_cmd_vel = self.blend_commands(path_follow_vel_cmd, 
-                                            obst_avoid_vel_cmd)
-                                            #bin_align_vel_cmd,
-                                            #drop_align_vel_cmd)
+                                            obst_avoid_vel_cmd,
+                                            pick_align_vel_cmd,
+                                            drop_align_vel_cmd)
 
         
         return final_cmd_vel
-
-
     
-    def find_next_waypoint(self):
-        # intakes the current node and finds the next one
-        # self.nxt_waypoint_idx = self._current_path.index(self._curr_waypoint) + 1
-        self.nxt_waypoint_idx += 1
-        self.get_logger().info('Next Waypoint Index {}:'.format(self.nxt_waypoint_idx))
+    # TODO check if the brainwaves are merged properly
+    # to test out just the path following take a look at comments above avoid_obstacle function 
+    def blend_commands(self, path_follow_brainwave,
+                       obs_avoid_brainwave, pick_align_brainwave, drop_align_brainwave):
+        merged_brainwave_x = [0] * 37
+        merged_brainwave_y = [0] * 37
+        merged_brainwave_z = [0] * 51
+        # merges the brainwaves to determine the best x, y, and z velocities
+        if path_follow_brainwave != None:
+            # self.get_logger().info("path following not null!")
+            merged_brainwave_x = list(np.add(merged_brainwave_x, path_follow_brainwave[0]))
+            merged_brainwave_y = list(np.add(merged_brainwave_y, path_follow_brainwave[1]))
+            merged_brainwave_z = list(np.add(merged_brainwave_z, path_follow_brainwave[2]))
 
-        # check if next waypoint is the same as the current
-        while (self._curr_waypoint == self._current_path[self.nxt_waypoint_idx] 
-                and self.nxt_waypoint_idx < len(self._current_path)-1):
-            # delay for 5 seconds
-            self.get_logger().info('Pick/Drop Operation...')
-            # update current waypoint
-            self._curr_waypoint = self._current_path[self.nxt_waypoint_idx]
-            self.nxt_waypoint_idx += 1
-            # command a hover behavior
-            # self.hover() #TODO: This is temporary... ideally drone should change altitude to pick/drop
-            # create velocity command to rise to bin
-            rise_cmd_vel = Twist()
-            rise_cmd_vel.linear.x = 0.0
-            rise_cmd_vel.linear.y = 0.0
-            # find distance from bin
-            delta_z = self._curr_waypoint.position.z - self._state.position.z
-            self.get_logger().info('Current Z is {}'.format(self._state.position.z))
-            self.get_logger().info('Waypoint Z is {}'.format(self._curr_waypoint.position.z))
-            self.get_logger().info('Bin_delta_z is {}'.format(delta_z))
-            Kp_z = 0.5
-            rise_cmd_vel.linear.z = Kp_z * np.clip(delta_z, -self._vz_max, self._vz_max)
-            self.get_logger().info('linear.z is {}'.format(rise_cmd_vel.linear.z))
-            self.move(rise_cmd_vel)
-            # if reached bin, stop moving in z-direction
-            if abs(delta_z) <= 0.28:
-                self.get_logger().info('Reached bin...')
-                rise_cmd_vel.linear.z = 0.0
-                self.move(rise_cmd_vel)
-                self._stage = 3
+        if obs_avoid_brainwave != None:
+            # self.get_logger().info("obstacle avoidance not null!")
+            merged_brainwave_x = list(np.add(merged_brainwave_x, obs_avoid_brainwave[0]))
+            merged_brainwave_y = list(np.add(merged_brainwave_y, obs_avoid_brainwave[1]))
+            merged_brainwave_z = list(np.add(merged_brainwave_z, obs_avoid_brainwave[2]))
 
-            time.sleep(5)
+        
+        if pick_align_brainwave != None:
+            # self.get_logger().info("pick align not null!")
+            merged_brainwave_x = list(np.add(merged_brainwave_x, pick_align_brainwave[0]))
+            merged_brainwave_y = list(np.add(merged_brainwave_y, pick_align_brainwave[1]))
+            merged_brainwave_z = list(np.add(merged_brainwave_z, pick_align_brainwave[2]))
 
-            
-        # land if you're at the end
-        if self.nxt_waypoint_idx >= len(self._current_path)-1:
-            self.land()
-            self._stage = 5 
-    
-        nxt_waypoint = self._current_path[self.nxt_waypoint_idx]
-        # calculate next waypoint
-        return nxt_waypoint
-    
 
-    def find_current_waypoint(self):
-        """Returns the corresponding (or closest) node/waypoint to the given position"""
-        curr_waypoint = None
-        min_dist = 999
+        if drop_align_brainwave != None:
+            self.get_logger().info("drop align not null!")
+            merged_brainwave_x = list(np.add(merged_brainwave_x, drop_align_brainwave[0]))
+            merged_brainwave_y  = list(np.add(merged_brainwave_y, drop_align_brainwave[1]))
+            merged_brainwave_z  = list(np.add(merged_brainwave_z, drop_align_brainwave[2]))
 
-        # iterate over all the nodes/wapoints in the path to find the one closest to the [x,y,z] point
-        for wp in self._current_path:
-            dist = self.calculate_euclidean_dist(wp.position, self._state.position)
+        # get final z velocity
+        # merged_brainwave_z = list(merged_brainwave_z)
+        # self.get_logger().info("merged brainwave_z: {}".format(merged_brainwave_z))
+        # self.get_logger().info("max of z-brainwave: {}".format(max(merged_brainwave_z)))
+        final_x_vel_index = merged_brainwave_x.index(max(merged_brainwave_x))
+        final_y_vel_index = merged_brainwave_y.index(max(merged_brainwave_y))
+        final_z_vel_index = merged_brainwave_z.index(max(merged_brainwave_z))
+        # self.get_logger().info("final_z_vel index: {}".format(final_z_vel_index))
+        xy_velocities = list(np.linspace(-self._v_max, self._v_max, 37))
+        z_velocities = np.linspace(-self._vz_max, self._vz_max, 51)
+        # self.get_logger().info("final z velocities: {}".format(list(z_velocities)))
+        final_x_vel= xy_velocities[final_x_vel_index]
+        final_y_vel= xy_velocities[final_y_vel_index]
+        final_z_vel= z_velocities[final_z_vel_index]
+        # self.get_logger().info("final z velocity: {}".format(final_z_vel))
 
-            if dist < min_dist:
-                curr_waypoint = wp
-                min_dist = dist
-                self.get_logger().info('Min node is {} and distance is {}'.format(curr_waypoint.id, min_dist))
-        print("-------------------")
+        # self.get_logger().info("Final Heading {}".format(heading_angle))      
+        
+        final_cmd = Twist()
+        if self._behavior == "path following":
+            delta_x = self._next_waypoint.position.x - self._state.position.x
+            delta_y = self._next_waypoint.position.y - self._state.position.y
+        else:
+            delta_x = 1.0
+            delta_y = 1.0
+        Kp_z = 0.5
 
-        return curr_waypoint
+        final_cmd.linear.x = self.clamp(final_x_vel * self._Kp * abs(delta_x), -self._v_max, self._v_max)
+        final_cmd.linear.y = self.clamp(final_y_vel * self._Kp * abs(delta_y), -self._v_max, self._v_max)
+        final_cmd.linear.z = self.clamp(final_z_vel, -self._vz_max, self._vz_max)
+        
+        # self.get_logger().info("Linear X: {}, Linear Y: {}, Linear Z: {}".format(final_cmd.linear.x, final_cmd.linear.y, final_cmd.linear.z))
+        final_cmd.angular.z = 0.0
+        return final_cmd
+
 
 
     # TODO figure out how to convert waypoint ID to coordinates
-    # TODO check how funciton works 
+    # TODO check how function works 
     def follow_path(self):
         # relative next waypoint ID  = next waypoint relative to the current waypoint 
         global_delta_y = self._next_waypoint.position.y - self._curr_waypoint.position.y 
         global_delta_x = self._next_waypoint.position.x - self._curr_waypoint.position.x
         global_delta_z = self._next_waypoint.position.z - self._curr_waypoint.position.z
-        # self.get_logger().info("Current Waypoint X: {}".format(self._curr_waypoint.position.x))
-        # self.get_logger().info("Current Waypoint Y: {}".format(self._curr_waypoint.position.y))
-        # self.get_logger().info("Current Waypoint Z: {}".format(self._curr_waypoint.position.z))
-        # self.get_logger().info("Next Waypoint X: {}".format(self._next_waypoint.position.x))
-        # self.get_logger().info("Next Waypoint Y: {}".format(self._next_waypoint.position.y))
-        # self.get_logger().info("Next Waypoint Z: {}".format(self._next_waypoint.position.z))
-        # self.get_logger().info("Change in X: {}".format(global_delta_x))
-        # self.get_logger().info("Change in Y: {}".format(global_delta_y))
-        # self.get_logger().info("Change in Z: {}".format(global_delta_z))
+        # self.get_logger().info("Current Waypoint X: {}, Y: {}, Z: {}".format(self._curr_waypoint.position.x, self._curr_waypoint.position.y, self._curr_waypoint.position.z))
+        # self.get_logger().info("Next Waypoint X: {}, Y: {}, Z: {}".format(self._next_waypoint.position.x, self._next_waypoint.position.y, self._next_waypoint.position.z))
+        # self.get_logger().info("Change in X: {}, Y: {}, Z: {}".format(global_delta_x, global_delta_y, global_delta_z))
 
-        # convert to angle (relative next waypoint id)
+        ### Get index for xy-brainwave (37 possibilities) ###
         head_angle = self.convert_to_angle(global_delta_x, global_delta_y)
-        # angle of heading converted to a position in list of brainwave
-        if head_angle == 360: 
-            head_angle_index = 0 
-        else: 
-            head_angle_index = round(head_angle/10)
-        # xy direction represent distance between drone location and waypoint in xy plane
-        xy_distance = math.sqrt(pow(global_delta_x, 2) + pow(global_delta_y, 2))
-        if xy_distance == 0: # waypoint is directly above drone
-            angle_of_elevation_rad = math.pi/2
-        else: 
-            # angle_of_elevation_rad = math.atan2(global_delta_z/xy_distance)
-            angle_of_elevation_rad = math.asin(global_delta_z/xy_distance)
-        # use create_normal_curve to generate the brainwave 
-        path_follow_brainwave = list(self.create_normal_curve(head_angle_index))
-        path_follow_brainwave.append(angle_of_elevation_rad)
-        # self.get_logger().info("Pathfollowing Brainwave {}".format(path_follow_brainwave))
+        
+        if self._behavior == "path following":
+            # normalize x_velocity and y_velocity
+            x_vel = math.cos(math.radians(head_angle)) * self._v_max
+            y_vel = math.sin(math.radians(head_angle)) * self._v_max
+        else:
+            x_vel = 0.0
+            y_vel = 0.0
+        
+        xy_velocities = list(np.linspace(-self._v_max, self._v_max, 37))
+        x_vel_index = xy_velocities.index(self.closest(xy_velocities, x_vel))
+        y_vel_index = xy_velocities.index(self.closest(xy_velocities, y_vel))
+
+
+        ### Get index for z-brainwave (51 possibilities) ###
+        z_velocities = list(np.linspace(-self._vz_max, self._vz_max, 51))
+        z_vel_index = z_velocities.index(self.closest(z_velocities, global_delta_z))
+        
+        # use generate_normalized_pdf to generate the brainwave 
+        path_follow_brainwave = []
+        # path_follow_brainwave.append(self.generate_normalized_pdf(head_angle_index, 0.7, 37))
+        path_follow_brainwave.append(self.generate_normalized_pdf(x_vel_index, 0.7, 37))
+        path_follow_brainwave.append(self.generate_normalized_pdf(y_vel_index, 0.7, 37))
+        path_follow_brainwave.append(self.generate_normalized_pdf(z_vel_index, 0.7, 51))
         return path_follow_brainwave
     
-    
+    def align_to_bin(self):
+        bin_pose = self.localize_bin()
+        
+        xy_velocities = list(np.linspace(-self._v_max, self._v_max, 37))
+        z_velocities = list(np.linspace(-self._vz_max, self._vz_max, 51))
+        match self._behavior:
+            case "pick operation: rising to bin":
+                self.get_logger().info('Pick Operation: Rising to Bin...')
+                
+                # set x and y vel to 0.0
+                delta_x = 0.0
+                delta_y = 0.0
+                # find distance from bin
+                delta_z = self._curr_waypoint.position.z - self._state.position.z
+                # self.get_logger().info('Current Z is {}'.format(self._state.position.z))
+                # self.get_logger().info('Waypoint Z is {}'.format(self._curr_waypoint.position.z))
+                # self.get_logger().info('Bin_delta_z is {}'.format(delta_z))
+
+                # if reached bin, stop moving in z-direction
+                if abs(delta_z) <= 0.28:
+                    self.get_logger().info('Pick Operation: Bin Reached!')
+                    self._behavior = "pick operation: aligning to bin"
+                    delta_z = 0.0
+                
+                x_vel_index = xy_velocities.index(self.closest(xy_velocities, delta_x))
+                y_vel_index = xy_velocities.index(self.closest(xy_velocities, delta_y))               
+                z_vel_index = z_velocities.index(self.closest(z_velocities, delta_z))
+
+            case "pick operation: aligning to bin":
+                self.get_logger().info('Pick Operation: Aligning to bin...')
+                
+                # call function get bin pose and calculate necessary delta_x, delta_y and delta_z
+
+                # set x and y vel to 0.0
+                delta_x = 0.0
+                delta_y = 0.0
+                delta_z = 0.0
+                
+                x_vel_index = xy_velocities.index(self.closest(xy_velocities, delta_x))
+                y_vel_index = xy_velocities.index(self.closest(xy_velocities, delta_y))               
+                z_vel_index = z_velocities.index(self.closest(z_velocities, delta_z))
+                self.get_logger().info('Pick Operation: Aligned to bin!')
+                self._behavior = "pick operation: picking parcel"
+
+            case "pick operation: picking parcel":
+                self.get_logger().info('Pick Operation: Picking Parcel...')
+                
+                # call function to pick parcel and set parcel_picked to True
+
+                # set x and y vel to 0.0
+                delta_x = 0.0
+                delta_y = 0.0
+                delta_z = 0.0
+                
+                x_vel_index = xy_velocities.index(self.closest(xy_velocities, delta_x))
+                y_vel_index = xy_velocities.index(self.closest(xy_velocities, delta_y))               
+                z_vel_index = z_velocities.index(self.closest(z_velocities, delta_z))
+                self.get_logger().info('Pick Operation: Parcel Picked!')
+                self._behavior = "pick operation: returning to highway"
+
+            case "pick operation: returning to highway": 
+                self.get_logger().info('Pick Operation: Returning to highway...')
+
+                # set x and y vel to 0.0
+                delta_x = 0.0
+                delta_y = 0.0
+                # find distance from bin
+                delta_z = self._lift_height - self._state.position.z
+                # self.get_logger().info('Current Z is {}'.format(self._state.position.z))
+                # self.get_logger().info('Waypoint Z is {}'.format(self._curr_waypoint.position.z))
+                # self.get_logger().info('Bin_delta_z is {}'.format(delta_z))
+
+                # if reached bin, stop moving in z-direction
+                if abs(delta_z) <= 0.45:
+                    self.get_logger().info('Pick Operation: Reached highway!')
+                    self._behavior = "path following"
+                    delta_z = 0.0
+                
+                x_vel_index = xy_velocities.index(self.closest(xy_velocities, delta_x))
+                y_vel_index = xy_velocities.index(self.closest(xy_velocities, delta_y))               
+                z_vel_index = z_velocities.index(self.closest(z_velocities, delta_z))
+            case _:
+                self.get_logger().info('Pick Operation: Do Nothing....')
+
+        # use generate_normalized_pdf to generate the brainwave 
+        bin_align_brainwave = []
+        bin_align_brainwave.append(self.generate_normalized_pdf(x_vel_index, 0.7, 37))
+        bin_align_brainwave.append(self.generate_normalized_pdf(y_vel_index, 0.7, 37))
+        bin_align_brainwave.append(self.generate_normalized_pdf(z_vel_index, 1.0, 51))           
+        return bin_align_brainwave
+
+    def align_to_drop_off(self, bin_pose):
+        drop_pose = self.localize_drop()
+        drop_align_brainwave = None
+        # ....
+        return drop_align_brainwave
+
     
     #TODO right now the function just replces the value if it gets new reading from the lidar. Since tere is one value for eaxh 10 degrees might want to optimize it 
     # to test just path following comment out the "for loop"
@@ -488,46 +520,16 @@ class AgentControlNode(Node):
         # function creates brainwave for obstacle avoidance
         # assumes the zero alighs with the 0 of the drone heading direction
         # what to expect from lidar [{ "x": 1.23, "y": 4.56, "distance": 5.67, "intensity": 10 },  { "x": -2.34, "y": 0.12, "distance": 3.45, "intensity": 5 },  { "x": 6.78, "y": -9.87, "distance": 10.11, "intensity": 8 }]
-        # obst_avoid_brainwave = np.zeros(36)
+        # obst_avoid_brainwave = np.zeros(37)
         # for point in lidar_scan:
         #     obstacle_coordinate_x = point["x"]
         #     obstacle_coordinate_y = point["y"]
         #     # converts to degree plus rounds it to the place
         #     obstacle_place = round(self.convert_to_angle(obstacle_coordinate_x, obstacle_coordinate_y) / 10) 
         #     obst_avoid_brainwave[obstacle_place] = point["distace"] * -1 
-        obst_avoid_brainwave = [0]*36
+        # obst_avoid_brainwave = [0]*37
+        obst_avoid_brainwave = None
         return obst_avoid_brainwave
-    
-    
-    def convert_to_angle(self, x, y):
-        # find angle between delta_x vector and delta_y vector
-        angle = math.degrees(math.atan2(y, x)) + 180
-        # self.get_logger().info("Angle of Attack: {}".format(angle))
-        # outputs angle from 0 to 360
-        return angle
-    
-    #TODO might give out an error when center of the wave is placed at index of "0"
-    def create_normal_curve(self, position):
-    # Generate a list of 36 values with a normal curve at specified position 
-    # used to generate a brainwave for path_following
-        values = np.zeros(36)
-        curve_start = position - 2
-        curve_end = position + 3
-        x = np.linspace(-2, 2, 5)
-        curve = norm.pdf(x)
-        if position > 1 and position < len(values) - 4: 
-            # self.get_logger().info('position is: {0}'.format(position))
-            values[curve_start:curve_end] = curve
-        elif position == 1:
-            values[-1] = curve[1]
-            values[0:4] = curve[1:]
-        elif position == 0:
-            values[-2:] = curve[0:2]
-            values[0:3] = curve[2:]
-        else:
-            #TODO: Very temporary fix
-            values[position] = 1
-        return values
 
     def move(self, cmd_vel):
         # publish control command
@@ -538,8 +540,26 @@ class AgentControlNode(Node):
         # publish the feedback (state of the agent)
         self._feedback_msg.state = self._state
         self._feedback_msg.agent_id = self._agent_id
-        self._task_handle.publish_feedback(self._feedback_msg)
+        self._task_handle.publish_feedback(self._feedback_msg)   
+    
+    def convert_to_angle(self, x, y):
+        # find angle between delta_x vector and delta_y vector
+        angle = math.degrees(math.atan2(y, x)) + 180
+        # self.get_logger().info("Angle of Attack: {}".format(angle))
+        # outputs angle from 0 to 370
+        return angle
+    
+    def generate_normalized_pdf(self, center_index, std_deviation, size):
+        # Calculate the positions for the array based on the center index
+        positions = np.arange(size) - center_index
 
+        # Calculate the Gaussian distribution values using the positions, mean=0
+        gaussian_values = np.exp(-0.5 * (positions / std_deviation) ** 2)
+
+        # Normalize the Gaussian values to create a PDF (Probability Density Function)
+        normalized_pdf = gaussian_values / np.sum(gaussian_values)
+
+        return list(normalized_pdf)
 
     def hover(self):
         cmd_vel = Twist()
@@ -551,17 +571,11 @@ class AgentControlNode(Node):
 
 
     def reached_waypoint(self):
-        # code to check whether we have reached the next waypoint
-        # get current location
-        # comp current location to waypoint location
-        # if close, return True, else return False
+        # check whether we have reached the next waypoint
         distance_threshold = 0.5
         delta_x = self._next_waypoint.position.x - self._state.position.x
         delta_y = self._next_waypoint.position.y - self._state.position.y
         wypt_distance = math.sqrt(pow(delta_x, 2) + pow(delta_y, 2))
-
-        if self.nxt_waypoint_idx > len(self._current_path)-3:
-            self.get_logger().info("Distance to next waypoint: {}".format(wypt_distance))
 
         if wypt_distance <= distance_threshold:
             self.get_logger().info("Drone has reached next waypoint!")
@@ -580,48 +594,33 @@ class AgentControlNode(Node):
         return drop_pose
     
 
-    def align_to_bin(self, bin_pose):
-        bin_align_cmd = None
-        # ....
-        return bin_align_cmd
+    def find_next_waypoint(self):
+    # intakes the current node and finds the next one
+    # self.nxt_waypoint_idx = self._current_path.index(self._curr_waypoint) + 1
+        self.get_logger().info('Next Waypoint Index {}:'.format(self.nxt_waypoint_idx))
 
-    def align_to_drop_off(self, bin_pose):
-        drop_align_cmd = None
-        # ....
-        return drop_align_cmd
-
-    # TODO check if the barinwaves are merged properly
-    # to test out just the path following take a look at comments above avoid_obstacle function 
-    def blend_commands(self, path_follow_brainwave,
-                       obs_avoid_brainwave):
-        # merges the brainwaves to determine the best directio of heading 
-        z_angle_rad = path_follow_brainwave[-1]
-        path_follow_brainwave.pop(-1)
-        merged_brainwave = list(np.array(path_follow_brainwave) + np.array(obs_avoid_brainwave))
-        heading_angle = ((merged_brainwave.index(max(merged_brainwave)))*10)
-        heading_angle_rad = math.radians(heading_angle)
-        # self.get_logger().info("Final Heading {}".format(heading_angle))
-        # velocity = 0.2
-        final_cmd = Twist()
-        # instead of multiplying by '-1' try to go to follow path and switch substraction of current and previous (might work, needs to be tried out)
+        nxt_waypoint = self._current_path[self.nxt_waypoint_idx]
+        # calculate next waypoint
+        return nxt_waypoint
 
 
-        delta_x = self._next_waypoint.position.x - self._state.position.x
-        delta_y = self._next_waypoint.position.y - self._state.position.y
-        # wypt_distance = math.sqrt(pow(delta_x, 2) + pow(delta_y, 2))
-        KP = 1.0
+    # def find_current_waypoint(self):
+    #     """Returns the corresponding (or closest) node/waypoint to the given position"""
+    #     curr_waypoint = None
+    #     min_dist = 999
 
-        # final_cmd.linear.x = math.cos(heading_angle_rad) * self._v_max
-        # final_cmd.linear.y = math.sin(heading_angle_rad) * self._v_max
-        # final_cmd.linear.z = math.sin(z_angle_rad) * self._vz_max
+    #     # iterate over all the nodes/waypoints in the path to find the one closest to the [x,y,z] point
+    #     for wp in self._current_path:
+    #         dist = self.calculate_euclidean_dist(wp.position, self._state.position)
 
-        final_cmd.linear.x = self.clamp(math.cos(heading_angle_rad) * self._v_max * self._Kp * abs(delta_x), -self._v_max, self._v_max)
-        final_cmd.linear.y = self.clamp(math.sin(heading_angle_rad) * self._v_max * self._Kp * abs(delta_y), -self._v_max, self._v_max)
-        final_cmd.linear.z = 0.0
-        # self.get_logger().info("Linear X: {}, Linear Y: {}, Linear Z: {}".format(final_cmd.linear.x, final_cmd.linear.y, final_cmd.linear.z))
-        final_cmd.angular.z = 0.0
-        #final_cmd = None 
-        return final_cmd
+    #         if dist < min_dist:
+    #             curr_waypoint = wp
+    #             min_dist = dist
+    #             self.get_logger().info('Min node is {} and distance is {}'.format(curr_waypoint.id, min_dist))
+    #     print("-------------------")
+
+    #     return curr_waypoint
+    
     
 
     def control_cycle(self, ):
@@ -649,6 +648,9 @@ class AgentControlNode(Node):
         return np.sqrt((pos1.x - pos2.x)**2 + 
                        (pos1.y - pos2.y)**2 +
                        (pos1.z - pos2.z)**2)
+    
+    def closest(self, lst, K):
+        return lst[min(range(len(lst)), key = lambda i: abs(lst[i]-K))]
 
     # def task_complete(self):
     #     return False
@@ -658,8 +660,7 @@ class AgentControlNode(Node):
         if task_handle.is_cancel_requested:
             task_handle.canceled()
             self.get_logger().info('Task canceled')
-
-        self._cancelled = True
+            self._cancelled = True
     
     def take_off(self):
         self.get_logger().info('Taking Off...')
