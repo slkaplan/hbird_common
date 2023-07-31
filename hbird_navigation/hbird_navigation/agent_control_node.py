@@ -489,7 +489,7 @@ class AgentControlNode(Node):
                 # self.get_logger().info('Bin_delta_z is {}'.format(delta_z))
 
                 # if reached bin, stop moving in z-direction
-                if abs(delta_z) <= 0.45:
+                if abs(delta_z) <= 0.5:
                     self.get_logger().info('Pick Operation: Reached highway!')
                     self._behavior = "path following"
                     delta_z = 0.0
