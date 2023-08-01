@@ -337,23 +337,24 @@ class AgentControlNode(Node):
         if drop_align_brainwave != None:
             self.get_logger().info("drop align not null!")
             merged_brainwave_x = list(np.add(merged_brainwave_x, drop_align_brainwave[0]))
-            merged_brainwave_y  = list(np.add(merged_brainwave_y, drop_align_brainwave[1]))
-            merged_brainwave_z  = list(np.add(merged_brainwave_z, drop_align_brainwave[2]))
+            merged_brainwave_y = list(np.add(merged_brainwave_y, drop_align_brainwave[1]))
+            merged_brainwave_z = list(np.add(merged_brainwave_z, drop_align_brainwave[2]))
 
         # get final z velocity
         # merged_brainwave_z = list(merged_brainwave_z)
-        # self.get_logger().info("merged brainwave_z: {}".format(merged_brainwave_z))
-        # self.get_logger().info("max of z-brainwave: {}".format(max(merged_brainwave_z)))
+        # self.get_logger().info("merged brainwave_y: {}".format(merged_brainwave_y))
+        # self.get_logger().info("max of y-brainwave: {}".format(max(merged_brainwave_y)))
         final_x_vel_index = merged_brainwave_x.index(max(merged_brainwave_x))
         final_y_vel_index = merged_brainwave_y.index(max(merged_brainwave_y))
         final_z_vel_index = merged_brainwave_z.index(max(merged_brainwave_z))
-        # self.get_logger().info("final_z_vel index: {}".format(final_z_vel_index))
+        # self.get_logger().info("final_y_vel index: {}".format(final_y_vel_index))
         xy_velocities = list(np.linspace(-self._v_max, self._v_max, 37))
         z_velocities = np.linspace(-self._vz_max, self._vz_max, 51)
         # self.get_logger().info("final z velocities: {}".format(list(z_velocities)))
         final_x_vel= xy_velocities[final_x_vel_index]
         final_y_vel= xy_velocities[final_y_vel_index]
         final_z_vel= z_velocities[final_z_vel_index]
+        # self.get_logger().info("Final X: {}, Final Y: {}, Final Z: {}".format(final_x_vel, final_y_vel, final_z_vel))
         # self.get_logger().info("final z velocity: {}".format(final_z_vel))
 
         # self.get_logger().info("Final Heading {}".format(heading_angle))      
@@ -390,7 +391,7 @@ class AgentControlNode(Node):
 
         ### Get index for xy-brainwave (37 possibilities) ###
         head_angle = self.convert_to_angle(global_delta_x, global_delta_y)
-        
+        # self.get_logger().info("head angle: {}".format(head_angle))
         if self._behavior == "path following":
             # normalize x_velocity and y_velocity
             x_vel = math.cos(math.radians(head_angle)) * self._v_max
@@ -398,10 +399,13 @@ class AgentControlNode(Node):
         else:
             x_vel = 0.0
             y_vel = 0.0
-        
+        # self.get_logger().info("new x_vel: {}".format(x_vel))
+        # self.get_logger().info("new_y_vel: {}".format(y_vel))
         xy_velocities = list(np.linspace(-self._v_max, self._v_max, 37))
         x_vel_index = xy_velocities.index(self.closest(xy_velocities, x_vel))
         y_vel_index = xy_velocities.index(self.closest(xy_velocities, y_vel))
+        # self.get_logger().info("xy-velocities: {}".format(xy_velocities))
+        # self.get_logger().info("velocity closest to x_vel: {}, y_vel: {}".format(self.closest(xy_velocities, x_vel), self.closest(xy_velocities, y_vel)))
 
 
         ### Get index for z-brainwave (51 possibilities) ###
@@ -483,7 +487,7 @@ class AgentControlNode(Node):
                 delta_x = 0.0
                 delta_y = 0.0
                 # find distance from bin
-                delta_z = self._lift_height - self._state.position.z
+                delta_z = self._curr_waypoint.position.z - self._state.position.z
                 # self.get_logger().info('Current Z is {}'.format(self._state.position.z))
                 # self.get_logger().info('Waypoint Z is {}'.format(self._curr_waypoint.position.z))
                 # self.get_logger().info('Bin_delta_z is {}'.format(delta_z))
@@ -544,7 +548,11 @@ class AgentControlNode(Node):
     
     def convert_to_angle(self, x, y):
         # find angle between delta_x vector and delta_y vector
-        angle = math.degrees(math.atan2(y, x)) + 180
+        # (LPB, old version, tested)
+        # angle = math.degrees(math.atan2(y, x)) + 180
+        # (LPB, new version, untested)
+        angle = math.degrees(math.atan2(y, x))
+
         # self.get_logger().info("Angle of Attack: {}".format(angle))
         # outputs angle from 0 to 370
         return angle
