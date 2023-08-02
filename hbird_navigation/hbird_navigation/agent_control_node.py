@@ -81,12 +81,15 @@ class AgentControlNode(Node):
         self._landing_height_threshold = 0.2
         self._v_max = 0.2
         self._vz_max = 0.13 # maximum velocity for take-off and landing
-        self._lift_height = 1.2
+        # self._lift_height = 1.2
+        self._lift_height = 0.9
+        self._timestep_duration = 8.0
 
 
         # represents the state as in a finite state diagram/flowchart
         self._stage = 0 # 0 is before takeoff and after landing, drone is not actively completing a task
         self._behavior = "waiting for task"
+        self._prev_behavior = None
         self._cancelled = False
         self._curr_waypoint = None
         self._next_waypoint = None
@@ -124,6 +127,12 @@ class AgentControlNode(Node):
         self._current_path = self._task_handle.request.path.data
         # self.get_logger().info(self._current_path)
         self.get_logger().info('Length of path: {}'.format(len(self._current_path)))
+        # path = []
+        # for n in self._current_path:
+        #     # path.append(n.id)
+        #     path.append((n.id, n.type))
+        # self.get_logger().info(path)
+        
 
         # find current waypoint
         # self._curr_waypoint = self.find_current_waypoint()
@@ -170,6 +179,7 @@ class AgentControlNode(Node):
                             self._stage = 3
                             self._behavior = "landing"
                         else:
+                            self._prev_behavior = self._behavior
                             self._next_waypoint = self.find_next_waypoint()
                             
                             # start timer to track how long agent has been traveling to next waypoint
@@ -194,7 +204,11 @@ class AgentControlNode(Node):
                                 #                                                 self._state.position.z))
 
                                 # check whether drone is within range of new way point or if it's on a pick/drop waypoint
-                                if self.reached_waypoint() or (self._next_waypoint.id == self._curr_waypoint.id):
+                                elapsed = time.time() - t1
+                                if self.reached_waypoint() \
+                                    and (elapsed >= self._timestep_duration):
+                                    # or (self._next_waypoint.id == self._curr_waypoint.id) \
+                                    # or ():
                                     # update current waypoint
                                     self._curr_waypoint = self._next_waypoint
                                     if self._curr_waypoint.type == 'pick':
@@ -220,9 +234,14 @@ class AgentControlNode(Node):
                                         self._cancelled = True
                                         self._stage = 4
                                         in_btwn_waypoints = False
+                                
+                                # if self._prev_behavior != self._behavior:
+                                #     self.get_logger().info("[Behavior change] Current behavior is: [{}]".format(self._behavior))
+
                             elapsed = time.time() - t1
                             self.get_logger().info("Elapsed time between waypoint {} and waypoint {}: {}".format(self.nxt_waypoint_idx-1, 
-                                                                                                                         self.nxt_waypoint_idx, elapsed))
+                                                                                                                         self.nxt_waypoint_idx, round(elapsed,2)))
+                            
                 case 3:
                     self.land()
                     self._task_complete = True
@@ -427,7 +446,7 @@ class AgentControlNode(Node):
         z_velocities = list(np.linspace(-self._vz_max, self._vz_max, 51))
         match self._behavior:
             case "pick operation: rising to bin":
-                self.get_logger().info('Pick Operation: Rising to Bin...')
+                # self.get_logger().info('Pick Operation: Rising to Bin...')
                 
                 # set x and y vel to 0.0
                 delta_x = 0.0
@@ -449,7 +468,7 @@ class AgentControlNode(Node):
                 z_vel_index = z_velocities.index(self.closest(z_velocities, delta_z))
 
             case "pick operation: aligning to bin":
-                self.get_logger().info('Pick Operation: Aligning to bin...')
+                # self.get_logger().info('Pick Operation: Aligning to bin...')
                 
                 # call function get bin pose and calculate necessary delta_x, delta_y and delta_z
 
@@ -465,7 +484,7 @@ class AgentControlNode(Node):
                 self._behavior = "pick operation: picking parcel"
 
             case "pick operation: picking parcel":
-                self.get_logger().info('Pick Operation: Picking Parcel...')
+                # self.get_logger().info('Pick Operation: Picking Parcel...')
                 
                 # call function to pick parcel and set parcel_picked to True
 
@@ -481,7 +500,7 @@ class AgentControlNode(Node):
                 self._behavior = "pick operation: returning to highway"
 
             case "pick operation: returning to highway": 
-                self.get_logger().info('Pick Operation: Returning to highway...')
+                # self.get_logger().info('Pick Operation: Returning to highway...')
 
                 # set x and y vel to 0.0
                 delta_x = 0.0
@@ -511,7 +530,7 @@ class AgentControlNode(Node):
         bin_align_brainwave.append(self.generate_normalized_pdf(z_vel_index, 1.0, 51))           
         return bin_align_brainwave
 
-    def align_to_drop_off(self, bin_pose):
+    def align_to_drop_off(self):
         drop_pose = self.localize_drop()
         drop_align_brainwave = None
         # ....
@@ -583,10 +602,13 @@ class AgentControlNode(Node):
         distance_threshold = 0.5
         delta_x = self._next_waypoint.position.x - self._state.position.x
         delta_y = self._next_waypoint.position.y - self._state.position.y
+        delta_z = self._next_waypoint.position.z - self._state.position.z
         wypt_distance = math.sqrt(pow(delta_x, 2) + pow(delta_y, 2))
+        # wypt_distance = math.sqrt(pow(delta_x, 2) + pow(delta_y, 2) + pow(delta_z, 2))
 
         if wypt_distance <= distance_threshold:
-            self.get_logger().info("Drone has reached next waypoint!")
+            self.get_logger().info("Drone has reached next waypoint!", once=True)
+            # self.get_logger().info("Drone has reached next waypoint!")
             return True
         else:
             return False
@@ -605,7 +627,9 @@ class AgentControlNode(Node):
     def find_next_waypoint(self):
     # intakes the current node and finds the next one
     # self.nxt_waypoint_idx = self._current_path.index(self._curr_waypoint) + 1
-        self.get_logger().info('Next Waypoint Index {}:'.format(self.nxt_waypoint_idx))
+        self.get_logger().info('Next Waypoint [{}] Index {}:'.format(
+            self._current_path[self.nxt_waypoint_idx].id, 
+            self.nxt_waypoint_idx))
 
         nxt_waypoint = self._current_path[self.nxt_waypoint_idx]
         # calculate next waypoint
