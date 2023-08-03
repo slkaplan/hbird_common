@@ -127,6 +127,8 @@ class AgentControlNode(Node):
         self._current_path = self._task_handle.request.path.data
         # self.get_logger().info(self._current_path)
         self.get_logger().info('Length of path: {}'.format(len(self._current_path)))
+
+        # print path
         # path = []
         # for n in self._current_path:
         #     # path.append(n.id)
@@ -217,7 +219,7 @@ class AgentControlNode(Node):
                                         in_btwn_waypoints = False
                                     elif self._curr_waypoint.type == 'drop':
                                         # self._stage = 4
-                                        self._behavior = "drop operation"
+                                        self._behavior = "drop operation: releasing parcel"
                                         in_btwn_waypoints = False
                                     elif self._curr_waypoint.type == 'end':
                                     #   self._stage = 5
@@ -252,6 +254,7 @@ class AgentControlNode(Node):
                     else: 
                         self.get_logger().info("Task completed successfully.")
                     self._stage = 0
+                    self._behavior = "waiting for task"
                 case 4:
                     # recalculate path with no pick or drop waypoints
                     self._stage = 2
@@ -302,7 +305,7 @@ class AgentControlNode(Node):
                 pick_align_vel_cmd = self.align_to_bin()
 
                 drop_align_vel_cmd = None
-            case "drop operation":
+            case "drop operation: releasing parcel":
                 # get path following velocity
                 path_follow_vel_cmd = self.follow_path()
 
@@ -354,7 +357,7 @@ class AgentControlNode(Node):
 
 
         if drop_align_brainwave != None:
-            self.get_logger().info("drop align not null!")
+            # self.get_logger().info("drop align not null!")
             merged_brainwave_x = list(np.add(merged_brainwave_x, drop_align_brainwave[0]))
             merged_brainwave_y = list(np.add(merged_brainwave_y, drop_align_brainwave[1]))
             merged_brainwave_z = list(np.add(merged_brainwave_z, drop_align_brainwave[2]))
@@ -382,14 +385,16 @@ class AgentControlNode(Node):
         if self._behavior == "path following":
             delta_x = self._next_waypoint.position.x - self._state.position.x
             delta_y = self._next_waypoint.position.y - self._state.position.y
+            delta_z = self._next_waypoint.position.z - self._state.position.z
         else:
             delta_x = 1.0
             delta_y = 1.0
+            delta_z = 1.0
         Kp_z = 0.5
 
         final_cmd.linear.x = self.clamp(final_x_vel * self._Kp * abs(delta_x), -self._v_max, self._v_max)
         final_cmd.linear.y = self.clamp(final_y_vel * self._Kp * abs(delta_y), -self._v_max, self._v_max)
-        final_cmd.linear.z = self.clamp(final_z_vel, -self._vz_max, self._vz_max)
+        final_cmd.linear.z = self.clamp(final_z_vel * abs(delta_z), -self._vz_max, self._vz_max)
         
         # self.get_logger().info("Linear X: {}, Linear Y: {}, Linear Z: {}".format(final_cmd.linear.x, final_cmd.linear.y, final_cmd.linear.z))
         final_cmd.angular.z = 0.0
@@ -532,8 +537,15 @@ class AgentControlNode(Node):
 
     def align_to_drop_off(self):
         drop_pose = self.localize_drop()
-        drop_align_brainwave = None
+
+        drop_align_brainwave = []
+        # center all brainwaves at velocity of 0 m/s
+        drop_align_brainwave.append(self.generate_normalized_pdf(18, 0.7, 37))
+        drop_align_brainwave.append(self.generate_normalized_pdf(18, 0.7, 37))
+        drop_align_brainwave.append(self.generate_normalized_pdf(25, 1.0, 51))  
         # ....
+        self.get_logger().info('Drop Operation: Parcel Released!')
+        self._behavior = "path following"
         return drop_align_brainwave
 
     
