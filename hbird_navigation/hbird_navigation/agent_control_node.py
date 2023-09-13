@@ -54,71 +54,9 @@ class AgentControlNode(Node):
 
         pos_setpoint = Waypoint()
 
-        # use switch case
-        match self.stage:
-            case "ground":
-                self.stage = "take-off"
+        # your code here
 
-
-            case "take-off":
-                self.get_logger().info('[Stage:] [Taking off]')
-                # set the position setpoint z_pos to desired hover height
-                pos_setpoint.position.z = self.z_des
-
-                # check if vehicle has reached setpoint
-                if (self._state.z_pos-self.z_des) < self.pos_threshold:
-                    # advance stage to next one
-                    self.stage = "move-right" 
-
-            case "move-right":
-                self.get_logger().info('[Stage:] [Moving Right]')
-                # set the position setpoint y_pos to desired position
-                pos_setpoint.position.z = self.z_des
-                pos_setpoint.position.y = self.y_des
-
-                # check if vehicle has reached setpoint
-                if (self._state.y_pos-self.y_des) < self.pos_threshold:
-                    # advance stage to next one
-                    self.stage = "move-forward" 
-
-
-            case "move-forward":
-                self.get_logger().info('[Stage:] [Moving Left]')
-                # set the position setpoint x_pos to desired position
-                pos_setpoint.position.z = self.z_des
-                pos_setpoint.position.x = self.x_des
-
-                # check if vehicle has reached setpoint
-                if (self._state.x_pos-self.x_des) < self.pos_threshold:
-                    # advance stage to next one
-                    self.stage = "rotate-about-z" 
-            
-            
-            case "rotate-about-z":
-                self.get_logger().info('[Stage:] [Rotating about Z]')
-                # set the position setpoint x_pos to desired position
-                pos_setpoint.position.z = self.z_des
-                pos_setpoint.heading = self.psi_des
-
-                # check if vehicle has reached setpoint
-                if (self._state.psi-self.psi_des) < self.orient_threshold:
-                    # advance stage to next one
-                    self.stage = "land" 
-
-
-            case "land":
-                self.get_logger().info('[Stage:] [Landing]')
-                # set the position setpoint z_pos to ground state
-                pos_setpoint.position.z = self.z_ground
-
-                # check if vehicle has reached setpoint
-                if (self._state.z_pos-self.z_ground) < self.pos_threshold:
-                    # advance stage to next one
-                    self.stage = "end" 
-
-            case "end":
-                self.get_logger().info('[Stage:] [Done!]')
-
+        
         # publish the setpoint
         self._pos_setpoint_publisher.publish(pos_setpoint)
 
