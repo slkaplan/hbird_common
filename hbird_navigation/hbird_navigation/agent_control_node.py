@@ -8,16 +8,14 @@ from hbird_msgs.msg import Waypoint, State
 
 class AgentControlNode(Node):
     
-    def init(self):
-        """ /// """
-
+    def __init__(self):
         super().__init__('agent_control_node')
 
         self.get_logger().info('Starting up the Agent Control Node...')
 
         # TODO: Add the parameter getter and the parameter declaration
         param_descriptor = ParameterDescriptor(description='Defines agent ID.')
-        self.declare_parameter('agent_id', 'HB0', param_descriptor)
+        self.declare_parameter('agent_id', 'HB1', param_descriptor)
         self._agent_id = self.get_parameter('agent_id')._value
         
         # define ROS2 topics
@@ -33,7 +31,7 @@ class AgentControlNode(Node):
                                                              pos_setpoint_topic, 10)
         
         # initialize timer
-        self._publish_rate = 5  # cycle/sec
+        self._publish_rate = 0.5  # sec/cycle
         self._publish_timer = self.create_timer(self._publish_rate, self.control_cycle)
 
         # define stage
