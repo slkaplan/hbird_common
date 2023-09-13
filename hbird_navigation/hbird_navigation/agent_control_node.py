@@ -34,14 +34,6 @@ class AgentControlNode(Node):
         self._publish_rate = 0.5  # sec/cycle
         self._publish_timer = self.create_timer(self._publish_rate, self.control_cycle)
 
-        # define stage
-        self.stage = "ground"
-
-        # set desired position setpoints
-        self.x_des = 1.0
-        self.y_des = 1.5
-        self.z_des = 3.0
-        self.psi_des = 6.283
 
 
     def state_update_callback(self, state_msg):
