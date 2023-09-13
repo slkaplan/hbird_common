@@ -43,7 +43,7 @@ class AgentControlNode(Node):
         self.y_des = 1.5
         self.z_des = 2.5
         self.psi_des = 6.283
-        self.z_ground = 0.0
+        self.z_ground = 0.26
 
         # set thresholds
         self.pos_threshold = 0.1
