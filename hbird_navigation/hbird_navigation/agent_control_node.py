@@ -66,7 +66,7 @@ class AgentControlNode(Node):
         pos_setpoint.position.x = self.x_des
         pos_setpoint.position.y = self.y_des
         pos_setpoint.position.z = self.z_des - self.z_ground
-        pos.setpoint.heading = self.psi_des
+        pos_setpoint.heading = self.psi_des
     
         # publish the setpoint
         self._pos_setpoint_publisher.publish(pos_setpoint)
