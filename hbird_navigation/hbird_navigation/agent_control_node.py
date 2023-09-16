@@ -63,8 +63,10 @@ class AgentControlNode(Node):
     def control_cycle(self):
 
         pos_setpoint = Waypoint()
-
-        # your code here
+        pos_setpoint.position.x = self.x_des
+        pos_setpoint.position.y = self.y_des
+        pos_setpoint.position.z = self.z_des - self.z_ground
+        pos.setpoint.heading = self.psi_des
     
         # publish the setpoint
         self._pos_setpoint_publisher.publish(pos_setpoint)
