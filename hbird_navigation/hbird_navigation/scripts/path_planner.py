@@ -1,5 +1,3 @@
-from a_star import AStarPlanner
-
 from hbird_msgs.msg import Waypoint
 
 class PathPlanner():
