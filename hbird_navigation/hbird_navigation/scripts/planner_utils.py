@@ -39,6 +39,7 @@ class Environment():
         # set environment params
         self.grid_size = config["map"]["grid_size"]
         self.robot_radius = config["map"]["robot_radius"]
+        self.robot_col_radius = config["map"]["collision_radius"]
 
         # create obstacle dictionary
         self.obstacles = self.create_obstacles(config["obstacles"])
@@ -112,15 +113,16 @@ class Visualizer():
         self.fig.set_size_inches(10, 8)
         # set marker parameters
         self.marker_scale_factor = 1000
-        self.marker_size = self.scale_marker_size()
+        self.robot_marker_size = self.scale_marker_size(self.env.robot_radius)
+        self.collision_box_marker_size = self.scale_marker_size(self.env.robot_col_radius)
 
 
-    def scale_marker_size(self):
+    def scale_marker_size(self, size):
         """Calculate the marker size relative to the axes limits"""
         x_range = self.env.x_max - self.env.x_min
         y_range = self.env.y_max - self.env.y_min
         max_range = max(x_range, y_range)
-        return (self.env.robot_radius * self.marker_scale_factor) / max_range      
+        return (size* self.marker_scale_factor) / max_range      
     
 
     def plot(self, path):
@@ -138,7 +140,12 @@ class Visualizer():
         self.ax.plot(self.env.start_pose.position.x, 
                 self.env.start_pose.position.y,
                 marker='s', 
-                markersize=self.marker_size, 
+                markersize=self.robot_marker_size, 
+                color='red', alpha=0.5)
+        self.ax.plot(self.env.start_pose.position.x, 
+                self.env.start_pose.position.y,
+                marker='s', 
+                markersize=self.collision_box_marker_size, 
                 color='red', alpha=0.5)
         self.ax.plot(self.env.start_pose.position.x, 
                 self.env.start_pose.position.y, 
@@ -146,7 +153,12 @@ class Visualizer():
         self.ax.plot(self.env.goal_pose.position.x, 
                 self.env.goal_pose.position.y, 
                 marker='s', 
-                markersize=self.marker_size, 
+                markersize=self.robot_marker_size, 
+                color='green', alpha=0.5)
+        self.ax.plot(self.env.goal_pose.position.x, 
+                self.env.goal_pose.position.y, 
+                marker='s', 
+                markersize=self.collision_box_marker_size, 
                 color='green', alpha=0.5)
         self.ax.plot(self.env.goal_pose.position.x, 
                 self.env.goal_pose.position.y, 

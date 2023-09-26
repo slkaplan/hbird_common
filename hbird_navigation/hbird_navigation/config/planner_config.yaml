@@ -1,34 +1,35 @@
 poses:     
-  start_x: 6.5
-  start_y: 0.55
+  start_x: 1.16
+  start_y: 0.97
   start_z: 0.0
   start_yaw: 0.0
-  goal_x: 0.7
-  goal_y: 2.6
+  goal_x: 8.65
+  goal_y: 7.51
   goal_z: 0.0
   goal_yaw: 0.0
 
 map:
   dimensions:
-    x_max: 7.1
+    x_max: 10.0
     x_min: 0.
-    y_max: 5.5
+    y_max: 9.0
     y_min: 0
-  grid_size: 0.5
-  robot_radius: 0.5
+  grid_size: 0.75
+  robot_radius: 0.35
+  collision_radius: 0.8
                    
 obstacles:
 - !!python/list
   - !!python/tuple
-    - 1.5
-    - 1.4
+    - 2.10
+    - 2.90
   - !!python/tuple
-    - 2.6
-    - 4.0
+    - 3.70
+    - 5.95
 - !!python/list
   - !!python/tuple
-    - 3.8
-    - 1.4
+    - 6.02
+    - 2.90
   - !!python/tuple
-    - 4.9
-    - 4.0
+    - 7.76
+    - 5.95
