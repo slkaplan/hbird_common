@@ -43,7 +43,7 @@ class Environment():
 
         # create obstacle dictionary
         self.obstacles = self.create_obstacles(config["obstacles"])
-
+        self.obs_corners = config["obstacles"]
         # create gridlines dictionary
         self.gridlines = self.create_gridlines()
 
