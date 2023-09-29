@@ -64,6 +64,12 @@ class AgentControlNode(Node):
         self._pos_setpoint_publisher.publish(pos_setpoint)
 
     
+    def map_to_webots_transform(self, waypoint):
+        """Helper function that returns a Waypoint adjusted to the webots reference frame"""
+        webots_wp = Waypoint()
+        webots_wp.position.x = waypoint.position.x - 4.5
+        webots_wp.position.y = waypoint.position.y - 5.0
+        return webots_wp
 
 
 
