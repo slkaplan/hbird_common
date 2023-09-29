@@ -133,4 +133,4 @@ class PathPlanner:
             waypoint.heading = self.env.start_pose.heading
             path.append(waypoint)
             pos = came_from[pos]
-        return path
+        return path[::-1]
